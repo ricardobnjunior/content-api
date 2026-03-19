@@ -1,32 +1,32 @@
-"""SQLAlchemy model for Article."""
+"""Article model with SQLAlchemy ORM."""
 
 import enum
 
-from sqlalchemy import Column, DateTime, Enum as SQLEnum, Integer, String, Text
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String, Table, Text
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.database import Base
 
 
 class ArticleStatus(str, enum.Enum):
-    """Status of an article."""
+    """Status options for an article."""
 
-    draft = "draft"
-    published = "published"
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    ARCHIVED = "archived"
+
+
+article_categories = Table(
+    "article_categories",
+    Base.metadata,
+    Column("article_id", Integer, ForeignKey("articles.id", ondelete="CASCADE")),
+    Column("category_id", Integer, ForeignKey("categories.id", ondelete="CASCADE")),
+)
 
 
 class Article(Base):
-    """Article ORM model.
-
-    Attributes:
-        id: Primary key.
-        title: Article title, max 200 chars.
-        body: Full article content.
-        author: Author name, max 100 chars.
-        status: Draft or published.
-        created_at: Timestamp set on creation.
-        updated_at: Timestamp updated on modification.
-    """
+    """ORM model representing a blog article."""
 
     __tablename__ = "articles"
 
@@ -34,6 +34,21 @@ class Article(Base):
     title = Column(String(200), nullable=False)
     body = Column(Text, nullable=False)
     author = Column(String(100), nullable=False)
-    status = Column(SQLEnum(ArticleStatus), default=ArticleStatus.draft, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    status = Column(
+        Enum(ArticleStatus),
+        default=ArticleStatus.DRAFT,
+        nullable=False,
+    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    categories = relationship(
+        "Category",
+        secondary=article_categories,
+        back_populates="articles",
+    )
