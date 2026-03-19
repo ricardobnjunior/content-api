@@ -1,29 +1,27 @@
-"""Database engine, session factory, and base model configuration."""
+"""Database configuration and session management."""
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
+from typing import Generator
 
-from app.config import settings
+
+DATABASE_URL = "sqlite:///./articles.db"
 
 engine = create_engine(
-    settings.database_url,
+    DATABASE_URL,
     connect_args={"check_same_thread": False},
 )
 
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 class Base(DeclarativeBase):
-    """Base class for all SQLAlchemy ORM models."""
+    pass
 
 
-def get_db():
-    """Yield a database session and ensure it is closed after use.
-
-    Yields:
-        Session: A SQLAlchemy database session.
-    """
-    db: Session = SessionLocal()
+def get_db() -> Generator[Session, None, None]:
+    """Dependency that provides a database session."""
+    db = SessionLocal()
     try:
         yield db
     finally:
@@ -31,8 +29,5 @@ def get_db():
 
 
 def create_tables() -> None:
-    """Create all database tables defined in the ORM models.
-
-    Uses the metadata from Base to create all tables that do not yet exist.
-    """
+    """Create all tables in the database."""
     Base.metadata.create_all(bind=engine)
