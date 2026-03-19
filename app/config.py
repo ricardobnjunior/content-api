@@ -1,29 +1,20 @@
-"""Application configuration using pydantic-settings."""
+"""Application configuration."""
 
-from functools import lru_cache
+import os
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables or .env file."""
+    """Application settings."""
 
-    model_config = SettingsConfigDict(
-        env_file=None,
-        env_ignore_empty=False,
-        case_sensitive=False,
-        extra="ignore",
-    )
+    database_url: str = os.environ.get("DATABASE_URL", "sqlite:///./app.db")
+    secret_key: str = os.environ.get("SECRET_KEY", "default-secret-key")
 
-    database_url: str = "sqlite:///content.db"
-    secret_key: str = "dev-secret-change-in-production"
-    environment: str = "development"
+    class Config:
+        env_file = ".env"
 
 
-@lru_cache
 def get_settings() -> Settings:
-    """Return cached application settings instance."""
+    """Get application settings."""
     return Settings()
-
-
-settings = get_settings()
