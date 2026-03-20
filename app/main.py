@@ -37,7 +37,7 @@ def create_app() -> FastAPI:
         name="uploads",
     )
 
-    application.include_router(api_router, prefix="/api")
+    application.include_router(api_router)
 
     @application.get("/health")
     def health_check() -> dict:
