@@ -1,33 +1,36 @@
-"""Pydantic v2 schemas for Article request/response validation."""
+"""Pydantic schemas for article request/response validation."""
 
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from app.models.article import ArticleStatus
+from app.schemas.category import CategoryResponse
 
 
 class ArticleCreate(BaseModel):
     """Schema for creating a new article."""
 
-    title: str = Field(..., max_length=200)
+    title: str
     body: str
-    author: str = Field(..., max_length=100)
+    author: str
     status: ArticleStatus = ArticleStatus.draft
+    category_ids: list[int] = []
 
 
 class ArticleUpdate(BaseModel):
-    """Schema for partially updating an existing article."""
+    """Schema for updating an existing article."""
 
-    title: Optional[str] = Field(None, max_length=200)
+    title: Optional[str] = None
     body: Optional[str] = None
-    author: Optional[str] = Field(None, max_length=100)
+    author: Optional[str] = None
     status: Optional[ArticleStatus] = None
+    category_ids: list[int] = []
 
 
 class ArticleResponse(BaseModel):
-    """Schema for returning article data in API responses."""
+    """Schema for article responses."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -36,12 +39,15 @@ class ArticleResponse(BaseModel):
     body: str
     author: str
     status: ArticleStatus
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    categories: list[CategoryResponse] = []
 
 
 class ArticleList(BaseModel):
-    """Schema for returning a paginated list of articles."""
+    """Schema for paginated article list responses."""
 
-    items: list[ArticleResponse]
+    model_config = ConfigDict(from_attributes=True)
+
     total: int
+    items: list[ArticleResponse]

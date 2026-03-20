@@ -1,5 +1,6 @@
-"""Models package — imports all ORM models so Base.metadata discovers them."""
+"""Models package — exports all ORM models."""
 
-from app.models.article import Article, ArticleStatus
+from app.models.article import Article, ArticleStatus, article_categories
+from app.models.category import Category
 
-__all__ = ["Article", "ArticleStatus"]
+__all__ = ["Article", "ArticleStatus", "article_categories", "Category"]
