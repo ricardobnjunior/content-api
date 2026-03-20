@@ -1,76 +1,77 @@
-"""Tests for app/config.py — Settings and get_settings."""
+"""Tests for the application configuration settings."""
 
 import os
 from unittest.mock import patch
 
 
-def test_settings_default_database_url():
-    """Settings should have a default database_url."""
-    from app.config import Settings
+def test_settings_default_values():
+    """Default settings are correctly defined."""
+    # Clear cache to get fresh instance
+    from app.config import get_settings
+    get_settings.cache_clear()
+
     with patch.dict(os.environ, {}, clear=False):
-        # Remove any env vars that might override defaults
-        env = {k: v for k, v in os.environ.items()
-               if k.upper() not in ("DATABASE_URL", "SECRET_KEY", "ENVIRONMENT")}
-        with patch.dict(os.environ, env, clear=True):
-            s = Settings()
-            assert s.database_url == "sqlite:///content.db"
-
-
-def test_settings_default_secret_key():
-    """Settings should have a default secret_key."""
-    from app.config import Settings  # noqa: E402
-    env = {k: v for k, v in os.environ.items()
-           if k.upper() not in ("DATABASE_URL", "SECRET_KEY", "ENVIRONMENT")}
-    with patch.dict(os.environ, env, clear=True):
+        from app.config import Settings  # noqa: E402
         s = Settings()
-        assert s.secret_key == "dev-secret-change-in-production"
+        assert s.database_url == "sqlite:///./app.db"
+        assert s.upload_dir == "uploads"
+        assert s.openrouter_model == "google/gemini-2.5-flash"
+        assert s.openrouter_api_key == ""
 
 
-def test_settings_default_environment():
-    """Settings should have a default environment of 'development'."""
+def test_settings_openrouter_api_key_from_env():
+    """openrouter_api_key is loaded from OPENROUTER_API_KEY env var."""
     from app.config import Settings  # noqa: E402
-    env = {k: v for k, v in os.environ.items()
-           if k.upper() not in ("DATABASE_URL", "SECRET_KEY", "ENVIRONMENT")}
-    with patch.dict(os.environ, env, clear=True):
+
+    with patch.dict(os.environ, {"OPENROUTER_API_KEY": "my-secret-key"}):
         s = Settings()
-        assert s.environment == "development"
+        assert s.openrouter_api_key == "my-secret-key"
 
 
-def test_settings_override_via_env():
-    """Settings fields can be overridden via environment variables."""
+def test_settings_openrouter_model_from_env():
+    """openrouter_model is loaded from OPENROUTER_MODEL env var."""
     from app.config import Settings  # noqa: E402
-    with patch.dict(os.environ, {"DATABASE_URL": "sqlite:///custom.db"}):
+
+    with patch.dict(os.environ, {"OPENROUTER_MODEL": "anthropic/claude-3"}):
         s = Settings()
-        assert s.database_url == "sqlite:///custom.db"
+        assert s.openrouter_model == "anthropic/claude-3"
 
 
-def test_settings_environment_override():
-    """Environment field can be overridden via env var."""
+def test_settings_database_url_from_env():
+    """database_url is loaded from DATABASE_URL env var."""
     from app.config import Settings  # noqa: E402
-    with patch.dict(os.environ, {"ENVIRONMENT": "production"}):
+
+    with patch.dict(os.environ, {"DATABASE_URL": "postgresql://user:pass@localhost/db"}):
         s = Settings()
-        assert s.environment == "production"
+        assert s.database_url == "postgresql://user:pass@localhost/db"
 
 
-def test_get_settings_returns_settings_instance():
-    """get_settings() should return a Settings instance."""
-    from app.config import Settings, get_settings  # noqa: E402
-    result = get_settings()
-    assert isinstance(result, Settings)
-
-
-def test_get_settings_is_cached():
-    """get_settings() should return the same object on repeated calls (lru_cache)."""
-    from app.config import get_settings  # noqa: E402
-    first = get_settings()
-    second = get_settings()
-    assert first is second
-
-
-def test_settings_field_names_are_lowercase():
-    """Settings must expose lowercase field names (not uppercase)."""
+def test_settings_has_all_required_fields():
+    """Settings class has all required fields."""
     from app.config import Settings  # noqa: E402
+
     s = Settings()
     assert hasattr(s, "database_url")
     assert hasattr(s, "secret_key")
-    assert hasattr(s, "environment")
+    assert hasattr(s, "upload_dir")
+    assert hasattr(s, "openrouter_api_key")
+    assert hasattr(s, "openrouter_model")
+
+
+def test_get_settings_returns_settings_instance():
+    """get_settings() returns a Settings instance."""
+    from app.config import get_settings, Settings  # noqa: E402
+
+    get_settings.cache_clear()
+    s = get_settings()
+    assert isinstance(s, Settings)
+
+
+def test_get_settings_is_cached():
+    """get_settings() returns the same instance on repeated calls."""
+    from app.config import get_settings  # noqa: E402
+
+    get_settings.cache_clear()
+    s1 = get_settings()
+    s2 = get_settings()
+    assert s1 is s2
