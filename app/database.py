@@ -1,15 +1,9 @@
-"""Database configuration and session management."""
+"""Database setup: sync engine, session, and base model."""
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import get_settings
-
-
-class Base(DeclarativeBase):
-    """Base class for all SQLAlchemy ORM models."""
-    pass
-
 
 settings = get_settings()
 
@@ -21,19 +15,20 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+class Base(DeclarativeBase):
+    """Declarative base class for all ORM models."""
+
+    pass
+
+
 def get_db():
-    """Dependency that provides a database session.
+    """Yield a database session and close it after use.
 
     Yields:
-        A SQLAlchemy Session instance.
+        Session: SQLAlchemy database session.
     """
-    db: Session = SessionLocal()
+    db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
-
-
-def create_tables() -> None:
-    """Create all database tables."""
-    Base.metadata.create_all(bind=engine)

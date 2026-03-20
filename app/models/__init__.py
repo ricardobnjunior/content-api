@@ -1,6 +1,5 @@
-"""Models package — exports all ORM models."""
+"""ORM models package."""
 
-from app.models.article import Article, ArticleStatus, article_categories
-from app.models.category import Category
+from app.models.article import Article, Category, article_categories
 
-__all__ = ["Article", "ArticleStatus", "article_categories", "Category"]
+__all__ = ["Article", "Category", "article_categories"]
