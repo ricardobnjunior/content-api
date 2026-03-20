@@ -1,13 +1,31 @@
-"""Main API router that aggregates all endpoint routers."""
+"""Central API router — aggregates all endpoint routers."""
 
 from fastapi import APIRouter
 
-from app.api.endpoints.articles import router as articles_router
-from app.api.endpoints.categories import router as categories_router
-from app.api.endpoints.suggestions import router as suggestions_router
+from app.api.endpoints import articles, categories, recommendations, suggestions
 
-router = APIRouter(prefix="/api/v1")
+router = APIRouter()
 
-router.include_router(articles_router)
-router.include_router(categories_router)
-router.include_router(suggestions_router)
+router.include_router(
+    articles.router,
+    prefix="/articles",
+    tags=["articles"],
+)
+
+router.include_router(
+    categories.router,
+    prefix="/categories",
+    tags=["categories"],
+)
+
+router.include_router(
+    suggestions.router,
+    prefix="/suggestions",
+    tags=["suggestions"],
+)
+
+router.include_router(
+    recommendations.router,
+    prefix="/recommendations",
+    tags=["recommendations"],
+)

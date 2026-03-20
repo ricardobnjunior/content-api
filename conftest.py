@@ -1,7 +1,13 @@
-"""Root conftest.py for test configuration and shared fixtures."""
+"""Root conftest for test configuration."""
 
-import sys
 import os
+import sys
 
-# Ensure project root is in sys.path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Ensure project root is on the path
+sys.path.insert(0, os.path.dirname(__file__))
+
+# Set required environment variables before any app imports
+os.environ.setdefault("DATABASE_URL", "sqlite:///./test_recommendations.db")
+os.environ.setdefault("SECRET_KEY", "test-secret-key")
+os.environ.setdefault("OPENROUTER_API_KEY", "test-api-key")
+os.environ.setdefault("OPENROUTER_MODEL", "test-model")
