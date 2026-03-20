@@ -1,30 +1,16 @@
-"""Pydantic schemas for category request/response validation."""
+"""Pydantic schemas for Category endpoints."""
 
-from typing import Optional
-
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel
 
 
 class CategoryCreate(BaseModel):
     """Schema for creating a new category."""
-
-    name: str = Field(..., max_length=100)
-    description: Optional[str] = None
-
-
-class CategoryUpdate(BaseModel):
-    """Schema for updating an existing category."""
-
-    name: Optional[str] = Field(None, max_length=100)
-    description: Optional[str] = None
+    name: str
 
 
 class CategoryResponse(BaseModel):
-    """Schema for category responses."""
-
-    model_config = ConfigDict(from_attributes=True)
-
+    """Schema returned by category endpoints."""
     id: int
     name: str
-    slug: str
-    description: Optional[str] = None
+
+    model_config = {"from_attributes": True}

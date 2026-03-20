@@ -1,39 +1,24 @@
-"""Database configuration and session management."""
+"""Database configuration."""
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-from app.config import get_settings
-
-
-class Base(DeclarativeBase):
-    """Base class for all SQLAlchemy ORM models."""
-    pass
-
-
-settings = get_settings()
+SQLALCHEMY_DATABASE_URL = "sqlite:///./articles.db"
 
 engine = create_engine(
-    settings.database_url,
-    connect_args={"check_same_thread": False} if "sqlite" in settings.database_url else {},
+    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
 )
-
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-def get_db():
-    """Dependency that provides a database session.
+class Base(DeclarativeBase):
+    pass
 
-    Yields:
-        A SQLAlchemy Session instance.
-    """
-    db: Session = SessionLocal()
+
+def get_db():
+    """Dependency that provides a database session."""
+    db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
-
-
-def create_tables() -> None:
-    """Create all database tables."""
-    Base.metadata.create_all(bind=engine)
