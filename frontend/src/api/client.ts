@@ -1,30 +1,16 @@
-import axios, { AxiosError } from "axios";
+import axios from "axios";
 
 /**
- * Configured Axios instance for all API requests.
- * Base URL is set to /api/v1, which Vite proxies to the FastAPI backend.
+ * Configured Axios instance for API requests.
+ *
+ * Uses a base URL of `/api/v1` so all requests are relative to
+ * the backend API prefix. In development this is proxied by Vite.
  */
-const apiClient = axios.create({
+const client = axios.create({
   baseURL: "/api/v1",
   headers: {
     "Content-Type": "application/json",
   },
 });
 
-/**
- * Response error interceptor — logs the error and re-throws it
- * so callers can handle it appropriately.
- */
-apiClient.interceptors.response.use(
-  (response) => response,
-  (error: AxiosError) => {
-    console.error(
-      "[API Error]",
-      error.response?.status,
-      error.response?.data ?? error.message
-    );
-    return Promise.reject(error);
-  }
-);
-
-export default apiClient;
+export default client;

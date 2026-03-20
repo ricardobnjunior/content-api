@@ -1,26 +1,29 @@
-import React from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import ArticlesPage from './pages/ArticlesPage';
+import React from "react";
+import { Route, BrowserRouter as Router, Routes } from "react-router-dom";
+import ArticleCreatePage from "./pages/ArticleCreatePage";
+import ArticleDetailPage from "./pages/ArticleDetailPage";
+import ArticleEditPage from "./pages/ArticleEditPage";
+import ArticleListPage from "./pages/ArticleListPage";
 
 /**
- * Root application component.
- * Defines all client-side routes using React Router v6.
+ * Root application component with client-side routing.
+ *
+ * Routes:
+ * - `/articles`          → ArticleListPage
+ * - `/articles/new`      → ArticleCreatePage (must be before `:id`)
+ * - `/articles/:id`      → ArticleDetailPage
+ * - `/articles/:id/edit` → ArticleEditPage
  */
-const App: React.FC = () => {
+export default function App(): React.ReactElement {
   return (
-    <BrowserRouter>
+    <Router>
       <Routes>
-        {/* Redirect root to articles list */}
-        <Route path="/" element={<Navigate to="/articles" replace />} />
-
-        {/* Articles listing page */}
-        <Route path="/articles" element={<ArticlesPage />} />
-
-        {/* Article detail page placeholder — to be implemented in a future issue */}
-        {/* <Route path="/articles/:id" element={<ArticleDetailPage />} /> */}
+        <Route path="/articles" element={<ArticleListPage />} />
+        <Route path="/articles/new" element={<ArticleCreatePage />} />
+        <Route path="/articles/:id" element={<ArticleDetailPage />} />
+        <Route path="/articles/:id/edit" element={<ArticleEditPage />} />
+        <Route path="*" element={<ArticleListPage />} />
       </Routes>
-    </BrowserRouter>
+    </Router>
   );
-};
-
-export default App;
+}
