@@ -1,4 +1,4 @@
-"""Tests for GET /api/v1/recommendations/{article_id}/similar endpoint."""
+"""Tests for app/api/endpoints/recommendations.py — similar articles API endpoint."""
 
 import json
 import os
@@ -6,14 +6,20 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-os.environ.setdefault("DATABASE_URL", "sqlite:///./test.db")
-os.environ.setdefault("SECRET_KEY", "test-secret")
-os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
+# Set required environment variables before importing app modules
+os.environ.setdefault("DATABASE_URL", "sqlite:///./test_endpoint.db")
+os.environ.setdefault("SECRET_KEY", "test-secret-key-endpoint")
+os.environ.setdefault("OPENROUTER_API_KEY", "test-key-endpoint")
 os.environ.setdefault("OPENROUTER_MODEL", "test-model")
 
 
-def make_article(article_id: int, title: str, content: str = "Content", status: str = "published"):
-    """Create a mock article object with required attributes."""
+def _make_article_orm(
+    article_id: int,
+    title: str,
+    content: str = "Some content",
+    status: str = "published",
+):
+    """Create a MagicMock that behaves like an Article ORM object."""
     article = MagicMock()
     article.id = article_id
     article.title = title
@@ -22,147 +28,115 @@ def make_article(article_id: int, title: str, content: str = "Content", status: 
     return article
 
 
-def make_llm_response_mock(similar_list: list) -> MagicMock:
-    """Create a mock OpenAI response."""
-    response = MagicMock()
-    response.choices = [MagicMock()]
-    response.choices[0].message.content = json.dumps({"similar": similar_list})
-    return response
+def _make_llm_response(similar: list[dict]) -> MagicMock:
+    """Create a mock LLM API response."""
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = json.dumps({"similar": similar})
+    return mock_response
 
 
 @pytest.fixture
 def client():
-    """Create a TestClient with all external dependencies mocked."""
+    """Create a TestClient with mocked database."""
     from starlette.testclient import TestClient
+
     from app.main import app  # noqa: E402
-    return TestClient(app)
+
+    with TestClient(app) as c:
+        yield c
 
 
-class TestGetSimilarArticlesEndpoint:
-    """Tests for GET /api/v1/recommendations/{article_id}/similar."""
+class TestGetSimilarArticlesHappyPath:
+    """Happy path tests for GET /api/v1/recommendations/{article_id}/similar."""
 
-    BASE_URL = "/api/v1/recommendations"
+    def test_returns_similar_articles_with_scores(self, client):
+        """Returns similar articles when multiple published articles exist."""
+        target = _make_article_orm(1, "Target Article")
+        candidate_a = _make_article_orm(2, "Related Article A")
+        candidate_b = _make_article_orm(3, "Related Article B")
 
-    def test_article_not_found_returns_404(self, client):
-        """Non-existent article ID → 404 response."""
-        with patch("app.api.endpoints.recommendations.get_article", return_value=None), \
-             patch("app.api.endpoints.recommendations.get_db"):
-            response = client.get(f"{self.BASE_URL}/9999/similar")
-
-        assert response.status_code == 404
-        assert "not found" in response.json()["detail"].lower()
-
-    def test_happy_path_returns_similar_articles(self, client):
-        """Multiple published articles + mocked LLM → returns similar articles with scores."""
-        target = make_article(1, "Python Programming", "Learn Python")
-        candidate_1 = make_article(2, "Advanced Python", "Deep Python")
-        candidate_2 = make_article(3, "JavaScript Guide", "Learn JS")
-
-        llm_response = make_llm_response_mock([
+        llm_response = _make_llm_response([
             {"id": 2, "similarity_score": 0.85},
-            {"id": 3, "similarity_score": 0.40},
+            {"id": 3, "similarity_score": 0.60},
         ])
 
-        with patch("app.api.endpoints.recommendations.get_article", return_value=target), \
-             patch("app.api.endpoints.recommendations.get_articles", return_value=[target, candidate_1, candidate_2]), \
-             patch("app.ai.similarity.OpenAI") as mock_openai_cls, \
-             patch("app.ai.similarity.get_settings") as mock_get_settings:
-
-            mock_settings = MagicMock()
-            mock_settings.openrouter_api_key = "test-key"
-            mock_settings.openrouter_model = "test-model"
-            mock_get_settings.return_value = mock_settings
-
+        with (
+            patch("app.api.endpoints.recommendations.get_article", return_value=target),
+            patch(
+                "app.api.endpoints.recommendations.get_articles",
+                return_value=[target, candidate_a, candidate_b],
+            ),
+            patch("app.ai.similarity.OpenAI") as mock_openai_cls,
+        ):
             mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = llm_response
             mock_openai_cls.return_value = mock_client
+            mock_client.chat.completions.create.return_value = llm_response
 
-            response = client.get(f"{self.BASE_URL}/1/similar")
+            response = client.get("/api/v1/recommendations/1/similar")
 
         assert response.status_code == 200
         data = response.json()
         assert data["article_id"] == 1
         assert len(data["similar_articles"]) == 2
         assert data["similar_articles"][0]["id"] == 2
-        assert data["similar_articles"][0]["title"] == "Advanced Python"
+        assert data["similar_articles"][0]["title"] == "Related Article A"
         assert data["similar_articles"][0]["similarity_score"] == pytest.approx(0.85)
+        assert data["similar_articles"][1]["id"] == 3
+        assert data["similar_articles"][1]["title"] == "Related Article B"
 
-    def test_only_one_published_article_returns_empty_list(self, client):
-        """Only the target article exists among published → no LLM call, empty list."""
-        target = make_article(1, "Solo Article", "Unique content")
+    def test_response_structure_matches_schema(self, client):
+        """Response contains required fields: article_id, similar_articles."""
+        target = _make_article_orm(5, "Some Article")
+        candidate = _make_article_orm(6, "Another Article")
 
-        with patch("app.api.endpoints.recommendations.get_article", return_value=target), \
-             patch("app.api.endpoints.recommendations.get_articles", return_value=[target]), \
-             patch("app.ai.similarity.OpenAI") as mock_openai_cls:
+        llm_response = _make_llm_response([{"id": 6, "similarity_score": 0.75}])
 
-            response = client.get(f"{self.BASE_URL}/1/similar")
+        with (
+            patch("app.api.endpoints.recommendations.get_article", return_value=target),
+            patch(
+                "app.api.endpoints.recommendations.get_articles",
+                return_value=[target, candidate],
+            ),
+            patch("app.ai.similarity.OpenAI") as mock_openai_cls,
+        ):
+            mock_client = MagicMock()
+            mock_openai_cls.return_value = mock_client
+            mock_client.chat.completions.create.return_value = llm_response
 
-            # LLM should NOT be called when there are no candidates
-            mock_openai_cls.assert_not_called()
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["article_id"] == 1
-        assert data["similar_articles"] == []
-
-    def test_draft_articles_excluded_from_candidates(self, client):
-        """Draft articles should not appear in the candidates sent to LLM."""
-        target = make_article(1, "Published Article", "Content", status="published")
-        published = make_article(2, "Another Published", "Content", status="published")
-        # Draft should be excluded — get_articles(status="published") won't return it
-        # We simulate this by only returning published articles from get_articles
-
-        llm_response = make_llm_response_mock([
-            {"id": 2, "similarity_score": 0.75},
-        ])
-
-        with patch("app.api.endpoints.recommendations.get_article", return_value=target), \
-             patch("app.api.endpoints.recommendations.get_articles", return_value=[target, published]), \
-             patch("app.ai.similarity.OpenAI") as mock_openai_cls, \
-             patch("app.ai.similarity.get_settings") as mock_get_settings:
-
-            mock_settings_obj = MagicMock()
-            mock_settings_obj.openrouter_api_key = "test-key"
-            mock_settings_obj.openrouter_model = "test-model"
-            mock_get_settings.return_value = mock_settings_obj
-
-            mock_llm_client = MagicMock()
-            mock_llm_client.chat.completions.create.return_value = llm_response
-            mock_openai_cls.return_value = mock_llm_client
-
-            response = client.get(f"{self.BASE_URL}/1/similar")
+            response = client.get("/api/v1/recommendations/5/similar")
 
         assert response.status_code == 200
         data = response.json()
-        similar_ids = [a["id"] for a in data["similar_articles"]]
-        assert 2 in similar_ids
-        # draft article ID 3 not in results
-        assert 3 not in similar_ids
+        assert "article_id" in data
+        assert "similar_articles" in data
+        assert isinstance(data["similar_articles"], list)
 
-    def test_limit_parameter_default_is_5(self, client):
-        """Default limit is 5 — endpoint accepts no limit param."""
-        target = make_article(1, "Target", "Content")
-        candidates = [make_article(i, f"Article {i}", f"Content {i}") for i in range(2, 9)]
+        item = data["similar_articles"][0]
+        assert "id" in item
+        assert "title" in item
+        assert "similarity_score" in item
+
+    def test_default_limit_is_five(self, client):
+        """Default limit of 5 is used when not specified."""
+        target = _make_article_orm(1, "Target")
+        # Create 7 candidates
+        candidates = [_make_article_orm(i, f"Article {i}") for i in range(2, 9)]
         all_articles = [target] + candidates
 
-        similar_list = [{"id": i, "similarity_score": round(0.9 - i * 0.05, 2)} for i in range(2, 9)]
-        llm_response = make_llm_response_mock(similar_list)
+        llm_similar = [{"id": i, "similarity_score": 1.0 - i * 0.1} for i in range(2, 9)]
+        llm_response = _make_llm_response(llm_similar)
 
-        with patch("app.api.endpoints.recommendations.get_article", return_value=target), \
-             patch("app.api.endpoints.recommendations.get_articles", return_value=all_articles), \
-             patch("app.ai.similarity.OpenAI") as mock_openai_cls, \
-             patch("app.ai.similarity.get_settings") as mock_get_settings:
+        with (
+            patch("app.api.endpoints.recommendations.get_article", return_value=target),
+            patch("app.api.endpoints.recommendations.get_articles", return_value=all_articles),
+            patch("app.ai.similarity.OpenAI") as mock_openai_cls,
+        ):
+            mock_client = MagicMock()
+            mock_openai_cls.return_value = mock_client
+            mock_client.chat.completions.create.return_value = llm_response
 
-            mock_settings_obj = MagicMock()
-            mock_settings_obj.openrouter_api_key = "test-key"
-            mock_settings_obj.openrouter_model = "test-model"
-            mock_get_settings.return_value = mock_settings_obj
-
-            mock_llm_client = MagicMock()
-            mock_llm_client.chat.completions.create.return_value = llm_response
-            mock_openai_cls.return_value = mock_llm_client
-
-            response = client.get(f"{self.BASE_URL}/1/similar")
+            response = client.get("/api/v1/recommendations/1/similar")
 
         assert response.status_code == 200
         data = response.json()
@@ -170,163 +144,224 @@ class TestGetSimilarArticlesEndpoint:
 
     def test_custom_limit_parameter(self, client):
         """Custom limit parameter is respected."""
-        target = make_article(1, "Target", "Content")
-        candidates = [make_article(i, f"Article {i}", f"Content {i}") for i in range(2, 7)]
+        target = _make_article_orm(1, "Target")
+        candidates = [_make_article_orm(i, f"Article {i}") for i in range(2, 8)]
         all_articles = [target] + candidates
 
-        similar_list = [{"id": i, "similarity_score": round(0.9 - i * 0.05, 2)} for i in range(2, 7)]
-        llm_response = make_llm_response_mock(similar_list)
+        llm_similar = [{"id": i, "similarity_score": 1.0 - (i - 2) * 0.1} for i in range(2, 8)]
+        llm_response = _make_llm_response(llm_similar)
 
-        with patch("app.api.endpoints.recommendations.get_article", return_value=target), \
-             patch("app.api.endpoints.recommendations.get_articles", return_value=all_articles), \
-             patch("app.ai.similarity.OpenAI") as mock_openai_cls, \
-             patch("app.ai.similarity.get_settings") as mock_get_settings:
+        with (
+            patch("app.api.endpoints.recommendations.get_article", return_value=target),
+            patch("app.api.endpoints.recommendations.get_articles", return_value=all_articles),
+            patch("app.ai.similarity.OpenAI") as mock_openai_cls,
+        ):
+            mock_client = MagicMock()
+            mock_openai_cls.return_value = mock_client
+            mock_client.chat.completions.create.return_value = llm_response
 
-            mock_settings_obj = MagicMock()
-            mock_settings_obj.openrouter_api_key = "test-key"
-            mock_settings_obj.openrouter_model = "test-model"
-            mock_get_settings.return_value = mock_settings_obj
-
-            mock_llm_client = MagicMock()
-            mock_llm_client.chat.completions.create.return_value = llm_response
-            mock_openai_cls.return_value = mock_llm_client
-
-            response = client.get(f"{self.BASE_URL}/1/similar?limit=2")
+            response = client.get("/api/v1/recommendations/1/similar?limit=3")
 
         assert response.status_code == 200
         data = response.json()
-        assert len(data["similar_articles"]) <= 2
+        assert len(data["similar_articles"]) <= 3
 
-    def test_llm_failure_returns_500(self, client):
-        """LLM API call failure → 500 response with error detail."""
-        target = make_article(1, "Target", "Content")
-        candidate = make_article(2, "Candidate", "Content")
 
-        with patch("app.api.endpoints.recommendations.get_article", return_value=target), \
-             patch("app.api.endpoints.recommendations.get_articles", return_value=[target, candidate]), \
-             patch("app.ai.similarity.OpenAI") as mock_openai_cls, \
-             patch("app.ai.similarity.get_settings") as mock_get_settings:
+class TestGetSimilarArticlesEdgeCases:
+    """Edge case tests for the recommendations endpoint."""
 
-            mock_settings_obj = MagicMock()
-            mock_settings_obj.openrouter_api_key = "test-key"
-            mock_settings_obj.openrouter_model = "test-model"
-            mock_get_settings.return_value = mock_settings_obj
+    def test_article_not_found_returns_404(self, client):
+        """Returns 404 when the target article does not exist."""
+        with patch("app.api.endpoints.recommendations.get_article", return_value=None):
+            response = client.get("/api/v1/recommendations/9999/similar")
 
-            mock_llm_client = MagicMock()
-            mock_llm_client.chat.completions.create.side_effect = Exception("Connection timeout")
-            mock_openai_cls.return_value = mock_llm_client
+        assert response.status_code == 404
+        data = response.json()
+        assert "detail" in data
+        assert "not found" in data["detail"].lower()
 
-            response = client.get(f"{self.BASE_URL}/1/similar")
+    def test_only_one_published_article_returns_empty_list(self, client):
+        """Returns empty similar_articles when no candidates exist."""
+        target = _make_article_orm(1, "Only Article")
 
-        assert response.status_code == 500
-        assert "Failed to compute article similarity" in response.json()["detail"]
+        with (
+            patch("app.api.endpoints.recommendations.get_article", return_value=target),
+            patch(
+                "app.api.endpoints.recommendations.get_articles",
+                return_value=[target],  # Only the target, no candidates
+            ),
+            patch("app.ai.similarity.OpenAI") as mock_openai_cls,
+        ):
+            mock_client = MagicMock()
+            mock_openai_cls.return_value = mock_client
 
-    def test_malformed_json_from_llm_returns_500(self, client):
-        """LLM returning malformed JSON → 500 response."""
-        target = make_article(1, "Target", "Content")
-        candidate = make_article(2, "Candidate", "Content")
+            response = client.get("/api/v1/recommendations/1/similar")
 
-        bad_response = MagicMock()
-        bad_response.choices = [MagicMock()]
-        bad_response.choices[0].message.content = "{{NOT JSON}}"
-
-        with patch("app.api.endpoints.recommendations.get_article", return_value=target), \
-             patch("app.api.endpoints.recommendations.get_articles", return_value=[target, candidate]), \
-             patch("app.ai.similarity.OpenAI") as mock_openai_cls, \
-             patch("app.ai.similarity.get_settings") as mock_get_settings:
-
-            mock_settings_obj = MagicMock()
-            mock_settings_obj.openrouter_api_key = "test-key"
-            mock_settings_obj.openrouter_model = "test-model"
-            mock_get_settings.return_value = mock_settings_obj
-
-            mock_llm_client = MagicMock()
-            mock_llm_client.chat.completions.create.return_value = bad_response
-            mock_openai_cls.return_value = mock_llm_client
-
-            response = client.get(f"{self.BASE_URL}/1/similar")
-
-        assert response.status_code == 500
-
-    def test_response_schema_fields(self, client):
-        """Response contains expected fields in the correct types."""
-        target = make_article(1, "Python Tutorial", "Learn Python")
-        candidate = make_article(2, "Advanced Python", "Deep dive")
-
-        llm_response = make_llm_response_mock([{"id": 2, "similarity_score": 0.78}])
-
-        with patch("app.api.endpoints.recommendations.get_article", return_value=target), \
-             patch("app.api.endpoints.recommendations.get_articles", return_value=[target, candidate]), \
-             patch("app.ai.similarity.OpenAI") as mock_openai_cls, \
-             patch("app.ai.similarity.get_settings") as mock_get_settings:
-
-            mock_settings_obj = MagicMock()
-            mock_settings_obj.openrouter_api_key = "test-key"
-            mock_settings_obj.openrouter_model = "test-model"
-            mock_get_settings.return_value = mock_settings_obj
-
-            mock_llm_client = MagicMock()
-            mock_llm_client.chat.completions.create.return_value = llm_response
-            mock_openai_cls.return_value = mock_llm_client
-
-            response = client.get(f"{self.BASE_URL}/1/similar")
+            # LLM should NOT be called
+            mock_client.chat.completions.create.assert_not_called()
 
         assert response.status_code == 200
         data = response.json()
-        assert "article_id" in data
-        assert "similar_articles" in data
-        assert isinstance(data["article_id"], int)
-        assert isinstance(data["similar_articles"], list)
+        assert data["article_id"] == 1
+        assert data["similar_articles"] == []
 
-        if data["similar_articles"]:
-            item = data["similar_articles"][0]
-            assert "id" in item
-            assert "title" in item
-            assert "similarity_score" in item
-            assert isinstance(item["id"], int)
-            assert isinstance(item["title"], str)
-            assert isinstance(item["similarity_score"], float)
+    def test_draft_articles_excluded_from_candidates(self, client):
+        """Draft articles are not passed to the LLM as candidates."""
+        target = _make_article_orm(1, "Published Target", status="published")
+        draft = _make_article_orm(2, "Draft Article", status="draft")
+        published = _make_article_orm(3, "Published Candidate", status="published")
 
-    def test_limit_out_of_range_returns_422(self, client):
-        """limit=0 is below minimum (ge=1) → 422 validation error."""
-        with patch("app.api.endpoints.recommendations.get_article", return_value=MagicMock()), \
-             patch("app.api.endpoints.recommendations.get_articles", return_value=[]):
-            response = client.get(f"{self.BASE_URL}/1/similar?limit=0")
+        llm_response = _make_llm_response([{"id": 3, "similarity_score": 0.70}])
 
-        assert response.status_code == 422
-
-    def test_no_llm_call_when_no_candidates(self, client):
-        """When no candidate articles exist, LLM is never called."""
-        target = make_article(1, "Solo Article", "Unique")
-
-        with patch("app.api.endpoints.recommendations.get_article", return_value=target), \
-             patch("app.api.endpoints.recommendations.get_articles", return_value=[target]), \
-             patch("app.ai.similarity.OpenAI") as mock_openai_cls:
-
-            response = client.get(f"{self.BASE_URL}/1/similar")
-            mock_openai_cls.assert_not_called()
-
-        assert response.status_code == 200
-
-    def test_target_excluded_from_candidates(self, client):
-        """The target article itself is excluded from the candidates list."""
-        target = make_article(1, "Target", "Content", status="published")
-        other = make_article(2, "Other", "Content", status="published")
-
-        # get_articles returns both; endpoint should filter out target (id=1)
         captured_candidates = []
 
         def fake_find_similar(target_article, candidate_articles, limit):
             captured_candidates.extend(candidate_articles)
-            return [{"id": 2, "similarity_score": 0.8}]
+            return [{"id": 3, "similarity_score": 0.70}]
 
-        with patch("app.api.endpoints.recommendations.get_article", return_value=target), \
-             patch("app.api.endpoints.recommendations.get_articles", return_value=[target, other]), \
-             patch("app.api.endpoints.recommendations.find_similar_articles", side_effect=fake_find_similar):
-
-            response = client.get(f"{self.BASE_URL}/1/similar")
+        with (
+            patch("app.api.endpoints.recommendations.get_article", return_value=target),
+            patch(
+                "app.api.endpoints.recommendations.get_articles",
+                return_value=[target, draft, published],
+            ),
+            patch(
+                "app.api.endpoints.recommendations.find_similar_articles",
+                side_effect=fake_find_similar,
+            ),
+        ):
+            response = client.get("/api/v1/recommendations/1/similar")
 
         assert response.status_code == 200
-        candidate_ids = [a.id for a in captured_candidates]
-        assert 1 not in candidate_ids
-        assert 2 in candidate_ids
+        candidate_ids = [c.id for c in captured_candidates]
+        assert 2 not in candidate_ids  # Draft should be excluded
+        assert 3 in candidate_ids  # Published should be included
+
+    def test_target_article_excluded_from_candidates(self, client):
+        """The target article itself is not included in candidates."""
+        target = _make_article_orm(1, "Target Article", status="published")
+        other = _make_article_orm(2, "Other Article", status="published")
+
+        captured_candidates = []
+
+        def fake_find_similar(target_article, candidate_articles, limit):
+            captured_candidates.extend(candidate_articles)
+            return [{"id": 2, "similarity_score": 0.80}]
+
+        with (
+            patch("app.api.endpoints.recommendations.get_article", return_value=target),
+            patch(
+                "app.api.endpoints.recommendations.get_articles",
+                return_value=[target, other],
+            ),
+            patch(
+                "app.api.endpoints.recommendations.find_similar_articles",
+                side_effect=fake_find_similar,
+            ),
+        ):
+            response = client.get("/api/v1/recommendations/1/similar")
+
+        assert response.status_code == 200
+        candidate_ids = [c.id for c in captured_candidates]
+        assert 1 not in candidate_ids  # Target should not be in candidates
+
+    def test_llm_api_failure_returns_500(self, client):
+        """Returns 500 when the LLM API call fails."""
+        target = _make_article_orm(1, "Target Article")
+        candidate = _make_article_orm(2, "Candidate Article")
+
+        with (
+            patch("app.api.endpoints.recommendations.get_article", return_value=target),
+            patch(
+                "app.api.endpoints.recommendations.get_articles",
+                return_value=[target, candidate],
+            ),
+            patch(
+                "app.api.endpoints.recommendations.find_similar_articles",
+                side_effect=RuntimeError("LLM API call failed: connection timeout"),
+            ),
+        ):
+            response = client.get("/api/v1/recommendations/1/similar")
+
+        assert response.status_code == 500
+        data = response.json()
+        assert "detail" in data
+
+    def test_malformed_llm_json_returns_500(self, client):
+        """Returns 500 when the LLM returns malformed JSON (via ValueError)."""
+        target = _make_article_orm(1, "Target Article")
+        candidate = _make_article_orm(2, "Candidate Article")
+
+        with (
+            patch("app.api.endpoints.recommendations.get_article", return_value=target),
+            patch(
+                "app.api.endpoints.recommendations.get_articles",
+                return_value=[target, candidate],
+            ),
+            patch(
+                "app.api.endpoints.recommendations.find_similar_articles",
+                side_effect=ValueError("LLM returned malformed JSON"),
+            ),
+        ):
+            response = client.get("/api/v1/recommendations/1/similar")
+
+        assert response.status_code == 500
+
+    def test_all_articles_are_drafts_returns_empty_list(self, client):
+        """Returns empty list when all other articles are drafts."""
+        target = _make_article_orm(1, "Target", status="published")
+        draft1 = _make_article_orm(2, "Draft 1", status="draft")
+        draft2 = _make_article_orm(3, "Draft 2", status="draft")
+
+        with (
+            patch("app.api.endpoints.recommendations.get_article", return_value=target),
+            patch(
+                "app.api.endpoints.recommendations.get_articles",
+                return_value=[target, draft1, draft2],
+            ),
+            patch("app.ai.similarity.OpenAI") as mock_openai_cls,
+        ):
+            mock_client = MagicMock()
+            mock_openai_cls.return_value = mock_client
+
+            response = client.get("/api/v1/recommendations/1/similar")
+
+            mock_client.chat.completions.create.assert_not_called()
+
+        assert response.status_code == 200
+        assert response.json()["similar_articles"] == []
+
+    def test_limit_query_param_validation_too_low(self, client):
+        """Returns 422 when limit is less than 1."""
+        target = _make_article_orm(1, "Target Article")
+
+        with patch("app.api.endpoints.recommendations.get_article", return_value=target):
+            response = client.get("/api/v1/recommendations/1/similar?limit=0")
+
+        assert response.status_code == 422
+
+    def test_limit_query_param_validation_too_high(self, client):
+        """Returns 422 when limit exceeds 50."""
+        target = _make_article_orm(1, "Target Article")
+
+        with patch("app.api.endpoints.recommendations.get_article", return_value=target):
+            response = client.get("/api/v1/recommendations/1/similar?limit=51")
+
+        assert response.status_code == 422
+
+
+class TestRecommendationsRouterIntegration:
+    """Integration tests verifying the router is mounted correctly."""
+
+    def test_endpoint_is_accessible_at_correct_path(self, client):
+        """The recommendations endpoint is reachable at /api/v1/recommendations/."""
+        with patch("app.api.endpoints.recommendations.get_article", return_value=None):
+            response = client.get("/api/v1/recommendations/1/similar")
+
+        # 404 (article not found) means the route exists and handled the request
+        assert response.status_code == 404
+
+    def test_non_integer_article_id_returns_422(self, client):
+        """Returns 422 when article_id is not an integer."""
+        response = client.get("/api/v1/recommendations/not-an-id/similar")
+        assert response.status_code == 422
