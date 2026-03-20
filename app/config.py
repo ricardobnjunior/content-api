@@ -1,4 +1,4 @@
-"""Application configuration using pydantic-settings."""
+"""Application configuration settings."""
 
 import os
 from functools import lru_cache
@@ -11,24 +11,33 @@ class Settings(BaseSettings):
 
     Attributes:
         database_url: SQLAlchemy database connection URL.
-        secret_key: Secret key for JWT token signing.
-        environment: Deployment environment name.
-        upload_dir: Directory for storing uploaded files.
+        secret_key: Secret key for JWT and other cryptographic operations.
+        upload_dir: Directory for uploaded files.
+        openrouter_api_key: API key for OpenRouter LLM service.
+        openrouter_model: Model identifier to use with OpenRouter.
     """
 
     database_url: str = "sqlite:///./app.db"
-    secret_key: str = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")
-    environment: str = "development"
+    secret_key: str = os.environ.get("SECRET_KEY", "")
     upload_dir: str = "uploads"
+    openrouter_api_key: str = ""
+    openrouter_model: str = "google/gemini-2.5-flash"
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "case_sensitive": False,
+    }
 
 
-@lru_cache
+@lru_cache()
 def get_settings() -> Settings:
-    """Return cached Settings instance.
+    """Return cached application settings instance.
 
     Returns:
-        Singleton Settings instance.
+        Settings: The application settings singleton.
     """
     return Settings()
+
+
+settings = get_settings()
