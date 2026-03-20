@@ -1,40 +1,37 @@
-"""Database engine and session configuration."""
+"""Database configuration and session management."""
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-from app.config import get_settings
+from app.config import settings
 
 
 class Base(DeclarativeBase):
-    """Base class for all SQLAlchemy ORM models."""
+    """Base class for all SQLAlchemy models."""
+    pass
 
 
-def _get_engine():
-    """Create a SQLAlchemy engine from application settings.
+engine = create_engine(
+    settings.database_url,
+    connect_args={"check_same_thread": False} if "sqlite" in settings.database_url else {},
+)
 
-    Returns:
-        SQLAlchemy Engine instance.
-    """
-    settings = get_settings()
-    connect_args = {}
-    if "sqlite" in settings.database_url:
-        connect_args["check_same_thread"] = False
-    return create_engine(settings.database_url, connect_args=connect_args)
-
-
-engine = _get_engine()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def get_db():
-    """FastAPI dependency that provides a database session.
+    """Provide a database session for dependency injection.
 
     Yields:
-        SQLAlchemy Session instance.
+        Session: SQLAlchemy database session.
     """
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+
+def create_tables():
+    """Create all database tables."""
+    Base.metadata.create_all(bind=engine)

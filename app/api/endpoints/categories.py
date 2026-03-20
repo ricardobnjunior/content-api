@@ -1,89 +1,64 @@
-"""REST API endpoints for categories."""
+"""Categories API endpoints."""
+
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.crud.category import (
+    create_category,
+    delete_category,
+    get_categories,
+    get_category,
+    get_category_by_name,
+)
 from app.database import get_db
-from app.models.category import Category
-from app.schemas.category import CategoryCreate, CategoryResponse
 
 router = APIRouter(prefix="/categories", tags=["categories"])
 
 
-@router.get("", response_model=list[CategoryResponse])
-def list_categories(db: Session = Depends(get_db)) -> list[CategoryResponse]:
-    """List all categories.
+class CategoryResponse(BaseModel):
+    """Response model for category data."""
 
-    Args:
-        db: Database session.
+    id: int
+    name: str
 
-    Returns:
-        List of all categories.
-    """
-    return db.query(Category).all()
+    model_config = {"from_attributes": True}
 
 
-@router.post("", response_model=CategoryResponse, status_code=201)
-def create_category(
-    category_data: CategoryCreate,
-    db: Session = Depends(get_db),
-) -> CategoryResponse:
-    """Create a new category.
+class CategoryCreate(BaseModel):
+    """Request model for creating a category."""
 
-    Args:
-        category_data: Category creation payload.
-        db: Database session.
+    name: str
 
-    Returns:
-        The newly created category.
 
-    Raises:
-        HTTPException: 400 if category name already exists.
-    """
-    existing = db.query(Category).filter(Category.name == category_data.name).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Category already exists")
-
-    category = Category(name=category_data.name)
-    db.add(category)
-    db.commit()
-    db.refresh(category)
-    return category
+@router.get("/", response_model=List[CategoryResponse])
+def list_categories(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    """List all categories."""
+    return get_categories(db, skip=skip, limit=limit)
 
 
 @router.get("/{category_id}", response_model=CategoryResponse)
-def get_category(category_id: int, db: Session = Depends(get_db)) -> CategoryResponse:
-    """Retrieve a single category by ID.
-
-    Args:
-        category_id: Category primary key.
-        db: Database session.
-
-    Returns:
-        Category data.
-
-    Raises:
-        HTTPException: 404 if category not found.
-    """
-    category = db.query(Category).filter(Category.id == category_id).first()
+def read_category(category_id: int, db: Session = Depends(get_db)):
+    """Get a single category by ID."""
+    category = get_category(db, category_id)
     if category is None:
         raise HTTPException(status_code=404, detail="Category not found")
     return category
 
 
+@router.post("/", response_model=CategoryResponse, status_code=201)
+def create_category_endpoint(category: CategoryCreate, db: Session = Depends(get_db)):
+    """Create a new category."""
+    existing = get_category_by_name(db, category.name)
+    if existing:
+        raise HTTPException(status_code=400, detail="Category already exists")
+    return create_category(db, name=category.name)
+
+
 @router.delete("/{category_id}", status_code=204)
-def delete_category(category_id: int, db: Session = Depends(get_db)) -> None:
-    """Delete a category.
-
-    Args:
-        category_id: Category primary key.
-        db: Database session.
-
-    Raises:
-        HTTPException: 404 if category not found.
-    """
-    category = db.query(Category).filter(Category.id == category_id).first()
-    if category is None:
+def delete_category_endpoint(category_id: int, db: Session = Depends(get_db)):
+    """Delete a category."""
+    if not delete_category(db, category_id):
         raise HTTPException(status_code=404, detail="Category not found")
-    db.delete(category)
-    db.commit()
