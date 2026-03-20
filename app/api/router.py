@@ -2,13 +2,12 @@
 
 from fastapi import APIRouter
 
-from app.api.endpoints import articles, categories, recommendations, suggestions
+from app.api.endpoints import articles, categories, stats
+from app.api.endpoints.export import router as export_router
 
 router = APIRouter()
 
 router.include_router(articles.router, prefix="/articles", tags=["articles"])
 router.include_router(categories.router, prefix="/categories", tags=["categories"])
-router.include_router(suggestions.router, prefix="/suggestions", tags=["suggestions"])
-router.include_router(
-    recommendations.router, prefix="/recommendations", tags=["recommendations"]
-)
+router.include_router(stats.router, prefix="/stats", tags=["stats"])
+router.include_router(export_router, prefix="/export", tags=["export"])
