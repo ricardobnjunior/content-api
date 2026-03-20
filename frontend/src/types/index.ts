@@ -1,34 +1,54 @@
 /**
- * TypeScript interfaces matching the backend API schemas.
+ * Core type definitions for the frontend application.
  */
 
-/** Represents a news article from the backend. */
-export interface Article {
-  id: number;
-  title: string;
-  content: string | null;
-  status: string;
-  image_url: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-/** Pagination metadata returned with list responses. */
-export interface PaginationMeta {
-  total: number;
-  page: number;
-  per_page: number;
-  total_pages: number;
-}
-
-/** Paginated list of articles. */
-export interface ArticleList {
-  items: Article[];
-  meta: PaginationMeta;
-}
-
-/** Represents a content category. */
+/** Represents a category associated with articles. */
 export interface Category {
   id: number;
   name: string;
+  slug: string;
+}
+
+/** Represents an article returned from the API. */
+export interface Article {
+  id: number;
+  title: string;
+  content?: string;
+  status: "draft" | "published";
+  category_ids?: number[];
+  categories: Category[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+/** Payload for creating a new article. */
+export interface ArticleCreate {
+  title: string;
+  content?: string;
+  status?: "draft" | "published";
+  category_ids?: number[];
+}
+
+/** Payload for updating an existing article. */
+export interface ArticleUpdate {
+  title?: string;
+  content?: string;
+  status?: "draft" | "published";
+  category_ids?: number[];
+}
+
+/** Query parameters for listing articles. */
+export interface ArticleListParams {
+  skip?: number;
+  limit?: number;
+  status?: "draft" | "published";
+  category_id?: number;
+}
+
+/** Paginated list response for articles. */
+export interface ArticleListResponse {
+  items: Article[];
+  total: number;
+  skip: number;
+  limit: number;
 }
