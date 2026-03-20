@@ -1,11 +1,13 @@
-"""Main API router combining all endpoint sub-routers."""
+"""Main API router that aggregates all endpoint routers."""
 
 from fastapi import APIRouter
 
 from app.api.endpoints import articles, categories, stats
+from app.api.endpoints.export import router as export_router
 
 router = APIRouter(prefix="/api/v1")
 
-router.include_router(articles.router, prefix="/articles", tags=["articles"])
-router.include_router(categories.router, prefix="/categories", tags=["categories"])
-router.include_router(stats.router, prefix="/stats", tags=["stats"])
+router.include_router(articles.router)
+router.include_router(categories.router)
+router.include_router(stats.router)
+router.include_router(export_router)
