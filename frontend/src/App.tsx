@@ -1,29 +1,21 @@
-import React from "react";
-import { Route, BrowserRouter as Router, Routes } from "react-router-dom";
-import ArticleCreatePage from "./pages/ArticleCreatePage";
-import ArticleDetailPage from "./pages/ArticleDetailPage";
-import ArticleEditPage from "./pages/ArticleEditPage";
-import ArticleListPage from "./pages/ArticleListPage";
+import React from 'react';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import CategoriesPage from './pages/CategoriesPage';
 
 /**
- * Root application component with client-side routing.
+ * Root application component.
+ * Defines the top-level routing structure.
  *
- * Routes:
- * - `/articles`          → ArticleListPage
- * - `/articles/new`      → ArticleCreatePage (must be before `:id`)
- * - `/articles/:id`      → ArticleDetailPage
- * - `/articles/:id/edit` → ArticleEditPage
+ * @returns The application with routing configured.
  */
-export default function App(): React.ReactElement {
+const App: React.FC = () => {
   return (
-    <Router>
+    <BrowserRouter>
       <Routes>
-        <Route path="/articles" element={<ArticleListPage />} />
-        <Route path="/articles/new" element={<ArticleCreatePage />} />
-        <Route path="/articles/:id" element={<ArticleDetailPage />} />
-        <Route path="/articles/:id/edit" element={<ArticleEditPage />} />
-        <Route path="*" element={<ArticleListPage />} />
+        <Route path="/categories" element={<CategoriesPage />} />
       </Routes>
-    </Router>
+    </BrowserRouter>
   );
-}
+};
+
+export default App;
