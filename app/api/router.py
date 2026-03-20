@@ -1,12 +1,11 @@
-"""Central API router with /api/v1 prefix.
-
-Future feature routers should be included here via include_router().
-"""
+"""Central API router aggregating all endpoint routers."""
 
 from fastapi import APIRouter
 
+from app.api.endpoints.articles import router as articles_router
+from app.api.endpoints.categories import router as categories_router
+
 api_router = APIRouter(prefix="/api/v1")
 
-# Future routers will be registered here, e.g.:
-# from app.api.endpoints import items
-# api_router.include_router(items.router, prefix="/items", tags=["items"])
+api_router.include_router(articles_router)
+api_router.include_router(categories_router)
