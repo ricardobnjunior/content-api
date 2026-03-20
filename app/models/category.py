@@ -8,14 +8,21 @@ from app.models.article import article_categories
 
 
 class Category(Base):
-    """Category database model."""
+    """Category database model.
+
+    Attributes:
+        id: Primary key.
+        name: Category name (unique).
+        articles: Many-to-many relationship with Article.
+    """
 
     __tablename__ = "categories"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
-    slug = Column(String, nullable=False, unique=True)
+    name = Column(String(100), nullable=False, unique=True)
 
     articles = relationship(
-        "Article", secondary=article_categories, back_populates="categories"
+        "Article",
+        secondary=article_categories,
+        back_populates="categories",
     )
