@@ -1,87 +1,92 @@
-import React, { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { deleteArticle, getArticle } from "../api/articles";
-import { Article } from "../types";
+/**
+ * ArticleDetailPage — displays a single article with edit, delete, and image management options.
+ */
+import React, { useCallback, useEffect, useState } from "react";
+import { useNavigate, useParams, Link } from "react-router-dom";
+import { deleteArticle, deleteArticleImage, getArticle } from "../api/articles";
+import ImageUpload from "../components/ImageUpload";
+import type { Article } from "../types";
 
 /**
- * Read-only detail view for a single article.
+ * Page component that fetches and displays a single article by ID.
+ * Provides options to edit, delete the article, and upload/delete its image.
  *
- * Fetches the article by ID from the URL params, displays all fields,
- * and provides Edit and Delete actions.
+ * @returns The ArticleDetailPage component.
  */
-export default function ArticleDetailPage(): React.ReactElement {
+const ArticleDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
   const [article, setArticle] = useState<Article | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string>("");
-  const [isDeleting, setIsDeleting] = useState<boolean>(false);
-
-  useEffect(() => {
-    if (!id) return;
-
-    let cancelled = false;
-    setLoading(true);
-    setError("");
-
-    getArticle(Number(id))
-      .then((data) => {
-        if (!cancelled) {
-          setArticle(data);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setError("Article not found or could not be loaded.");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [id]);
-
-  /** Navigates to the edit page for this article. */
-  function handleEdit(): void {
-    navigate(`/articles/${id}/edit`);
-  }
+  const [error, setError] = useState<string | null>(null);
 
   /**
-   * Prompts the user to confirm deletion, then deletes the article
-   * and redirects to the articles list on success.
+   * Fetches the article data from the backend.
    */
-  async function handleDelete(): Promise<void> {
+  const fetchArticle = useCallback(async () => {
     if (!id) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await getArticle(Number(id));
+      setArticle(data);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to load article.";
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
 
+  useEffect(() => {
+    fetchArticle();
+  }, [fetchArticle]);
+
+  /**
+   * Handles article deletion with a confirmation dialog.
+   * Navigates to the articles list on success.
+   */
+  const handleDeleteArticle = async () => {
+    if (!article) return;
     const confirmed = window.confirm(
-      "Are you sure you want to delete this article? This action cannot be undone."
+      `Are you sure you want to delete "${article.title}"?`
     );
-
     if (!confirmed) return;
 
-    setIsDeleting(true);
+    try {
+      await deleteArticle(article.id);
+      navigate("/articles");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to delete article.";
+      setError(message);
+    }
+  };
+
+  /**
+   * Handles image deletion with a confirmation dialog.
+   * Refreshes the article after deletion.
+   */
+  const handleDeleteImage = async () => {
+    if (!article) return;
+    const confirmed = window.confirm(
+      "Are you sure you want to delete the image for this article?"
+    );
+    if (!confirmed) return;
 
     try {
-      await deleteArticle(Number(id));
-      navigate("/articles");
-    } catch {
-      setError("Failed to delete the article. Please try again.");
-      setIsDeleting(false);
+      await deleteArticleImage(article.id);
+      await fetchArticle();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to delete image.";
+      setError(message);
     }
-  }
+  };
 
   if (loading) {
     return (
       <main>
-        <p aria-live="polite" aria-busy="true">
-          Loading article…
-        </p>
+        <p aria-live="polite">Loading article…</p>
       </main>
     );
   }
@@ -92,9 +97,7 @@ export default function ArticleDetailPage(): React.ReactElement {
         <p role="alert" style={{ color: "red" }}>
           {error}
         </p>
-        <button type="button" onClick={() => navigate("/articles")}>
-          Back to Articles
-        </button>
+        <Link to="/articles">Back to articles</Link>
       </main>
     );
   }
@@ -103,104 +106,64 @@ export default function ArticleDetailPage(): React.ReactElement {
     return (
       <main>
         <p>Article not found.</p>
-        <button type="button" onClick={() => navigate("/articles")}>
-          Back to Articles
-        </button>
+        <Link to="/articles">Back to articles</Link>
       </main>
     );
   }
 
   return (
     <main>
-      <article aria-label={`Article: ${article.title}`}>
-        <header>
-          <h1>{article.title}</h1>
-          <p>
-            <strong>Status:</strong>{" "}
-            <span
-              aria-label={`Status: ${article.status}`}
-              style={{
-                textTransform: "capitalize",
-                color: article.status === "published" ? "green" : "gray",
-              }}
-            >
-              {article.status}
-            </span>
-          </p>
-
-          {article.categories && article.categories.length > 0 && (
-            <section aria-label="Categories">
-              <strong>Categories:</strong>{" "}
-              <ul
-                style={{ display: "inline-flex", gap: "0.5rem", listStyle: "none", padding: 0 }}
-              >
-                {article.categories.map((category) => (
-                  <li key={category.id}>
-                    <span>{category.name}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-
-          {article.created_at && (
-            <p>
-              <strong>Created:</strong>{" "}
-              <time dateTime={article.created_at}>
-                {new Date(article.created_at).toLocaleDateString()}
-              </time>
-            </p>
-          )}
-
-          {article.updated_at && (
-            <p>
-              <strong>Last updated:</strong>{" "}
-              <time dateTime={article.updated_at}>
-                {new Date(article.updated_at).toLocaleDateString()}
-              </time>
-            </p>
-          )}
-        </header>
-
-        {article.content ? (
-          <section aria-label="Article content">
-            <h2>Content</h2>
-            <p style={{ whiteSpace: "pre-wrap" }}>{article.content}</p>
-          </section>
-        ) : (
-          <section aria-label="Article content">
-            <p style={{ color: "gray", fontStyle: "italic" }}>No content provided.</p>
-          </section>
-        )}
-      </article>
-
-      <nav aria-label="Article actions" style={{ marginTop: "2rem", display: "flex", gap: "1rem" }}>
-        <button
-          type="button"
-          onClick={handleEdit}
-          aria-label="Edit this article"
-          disabled={isDeleting}
-        >
-          Edit
-        </button>
-        <button
-          type="button"
-          onClick={handleDelete}
-          disabled={isDeleting}
-          aria-label="Delete this article"
-          aria-busy={isDeleting}
-          style={{ color: "red" }}
-        >
-          {isDeleting ? "Deleting…" : "Delete"}
-        </button>
-        <button
-          type="button"
-          onClick={() => navigate("/articles")}
-          aria-label="Back to articles list"
-        >
-          Back to Articles
-        </button>
+      <nav aria-label="Breadcrumb">
+        <Link to="/articles">← Back to articles</Link>
       </nav>
+
+      <article>
+        <h1>{article.title}</h1>
+        <p>{article.body}</p>
+
+        <section aria-label="Article image">
+          <h2>Image</h2>
+          {article.image_url ? (
+            <div>
+              <img
+                src={article.image_url}
+                alt="Article image"
+                style={{ maxWidth: "100%", maxHeight: "400px", display: "block", marginBottom: "0.5rem" }}
+              />
+              <button
+                type="button"
+                onClick={handleDeleteImage}
+                aria-label="Delete article image"
+              >
+                Delete Image
+              </button>
+            </div>
+          ) : (
+            <div>
+              <p>No image</p>
+              <ImageUpload articleId={article.id} onUploadSuccess={fetchArticle} />
+            </div>
+          )}
+        </section>
+
+        <section aria-label="Article actions" style={{ marginTop: "1rem" }}>
+          <Link to={`/articles/${article.id}/edit`}>
+            <button type="button" aria-label={`Edit article: ${article.title}`}>
+              Edit
+            </button>
+          </Link>
+          <button
+            type="button"
+            onClick={handleDeleteArticle}
+            aria-label={`Delete article: ${article.title}`}
+            style={{ marginLeft: "0.5rem" }}
+          >
+            Delete
+          </button>
+        </section>
+      </article>
     </main>
   );
-}
+};
+
+export default ArticleDetailPage;

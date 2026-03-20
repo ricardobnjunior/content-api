@@ -1,54 +1,32 @@
 /**
- * Core type definitions for the frontend application.
+ * Core TypeScript interfaces for the application.
  */
 
-/** Represents a category associated with articles. */
-export interface Category {
-  id: number;
-  name: string;
-  slug: string;
-}
-
-/** Represents an article returned from the API. */
+/** Represents an article entity. */
 export interface Article {
   id: number;
   title: string;
-  content?: string;
-  status: "draft" | "published";
-  category_ids?: number[];
-  categories: Category[];
-  created_at?: string;
-  updated_at?: string;
+  body: string;
+  created_at: string;
+  updated_at: string;
+  image_url?: string | null;
 }
 
 /** Payload for creating a new article. */
-export interface ArticleCreate {
+export interface CreateArticlePayload {
   title: string;
-  content?: string;
-  status?: "draft" | "published";
-  category_ids?: number[];
+  body: string;
 }
 
 /** Payload for updating an existing article. */
-export interface ArticleUpdate {
+export interface UpdateArticlePayload {
   title?: string;
-  content?: string;
-  status?: "draft" | "published";
-  category_ids?: number[];
+  body?: string;
 }
 
-/** Query parameters for listing articles. */
-export interface ArticleListParams {
-  skip?: number;
-  limit?: number;
-  status?: "draft" | "published";
-  category_id?: number;
-}
-
-/** Paginated list response for articles. */
-export interface ArticleListResponse {
-  items: Article[];
-  total: number;
-  skip: number;
-  limit: number;
+/** Response returned after uploading an image. */
+export interface ImageResponse {
+  filename: string;
+  url: string;
+  size: number;
 }
