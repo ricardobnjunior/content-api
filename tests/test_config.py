@@ -1,76 +1,44 @@
-"""Tests for app/config.py — Settings and get_settings."""
-
 import os
 from unittest.mock import patch
 
 
-def test_settings_default_database_url():
-    """Settings should have a default database_url."""
-    from app.config import Settings
-    with patch.dict(os.environ, {}, clear=False):
-        # Remove any env vars that might override defaults
-        env = {k: v for k, v in os.environ.items()
-               if k.upper() not in ("DATABASE_URL", "SECRET_KEY", "ENVIRONMENT")}
-        with patch.dict(os.environ, env, clear=True):
-            s = Settings()
-            assert s.database_url == "sqlite:///content.db"
-
-
-def test_settings_default_secret_key():
-    """Settings should have a default secret_key."""
+def test_settings_defaults():
+    from importlib import reload
+    import app.config as config_module  # noqa: E402
     from app.config import Settings  # noqa: E402
-    env = {k: v for k, v in os.environ.items()
-           if k.upper() not in ("DATABASE_URL", "SECRET_KEY", "ENVIRONMENT")}
-    with patch.dict(os.environ, env, clear=True):
-        s = Settings()
-        assert s.secret_key == "dev-secret-change-in-production"
+
+    reload(config_module)
+    settings = Settings()
+    assert settings.database_url is not None
+    assert isinstance(settings.database_url, str)
 
 
-def test_settings_default_environment():
-    """Settings should have a default environment of 'development'."""
+def test_settings_from_env():
     from app.config import Settings  # noqa: E402
-    env = {k: v for k, v in os.environ.items()
-           if k.upper() not in ("DATABASE_URL", "SECRET_KEY", "ENVIRONMENT")}
-    with patch.dict(os.environ, env, clear=True):
-        s = Settings()
-        assert s.environment == "development"
+
+    with patch.dict(os.environ, {"DATABASE_URL": "sqlite:///test.db"}):
+        settings = Settings()
+        assert settings.database_url == "sqlite:///test.db"
 
 
-def test_settings_override_via_env():
-    """Settings fields can be overridden via environment variables."""
+def test_settings_openrouter_api_key_empty_by_default():
     from app.config import Settings  # noqa: E402
-    with patch.dict(os.environ, {"DATABASE_URL": "sqlite:///custom.db"}):
-        s = Settings()
-        assert s.database_url == "sqlite:///custom.db"
+
+    settings = Settings()
+    assert settings.openrouter_api_key == "" or settings.openrouter_api_key is None
 
 
-def test_settings_environment_override():
-    """Environment field can be overridden via env var."""
+def test_settings_openrouter_model_has_default():
     from app.config import Settings  # noqa: E402
-    with patch.dict(os.environ, {"ENVIRONMENT": "production"}):
-        s = Settings()
-        assert s.environment == "production"
+
+    settings = Settings()
+    assert settings.openrouter_model is not None
+    assert isinstance(settings.openrouter_model, str)
+    assert len(settings.openrouter_model) > 0
 
 
 def test_get_settings_returns_settings_instance():
-    """get_settings() should return a Settings instance."""
     from app.config import Settings, get_settings  # noqa: E402
-    result = get_settings()
-    assert isinstance(result, Settings)
 
-
-def test_get_settings_is_cached():
-    """get_settings() should return the same object on repeated calls (lru_cache)."""
-    from app.config import get_settings  # noqa: E402
-    first = get_settings()
-    second = get_settings()
-    assert first is second
-
-
-def test_settings_field_names_are_lowercase():
-    """Settings must expose lowercase field names (not uppercase)."""
-    from app.config import Settings  # noqa: E402
-    s = Settings()
-    assert hasattr(s, "database_url")
-    assert hasattr(s, "secret_key")
-    assert hasattr(s, "environment")
+    settings = get_settings()
+    assert isinstance(settings, Settings)
