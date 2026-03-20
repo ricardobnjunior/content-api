@@ -1,11 +1,11 @@
-"""Article ORM model."""
+"""Article model."""
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Table, Text, func
+from sqlalchemy import Column, Integer, String, Text, DateTime, Table, ForeignKey
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 
 from app.database import Base
 
-# Association table for article-category many-to-many relationship
 article_categories = Table(
     "article_categories",
     Base.metadata,
@@ -15,31 +15,16 @@ article_categories = Table(
 
 
 class Article(Base):
-    """Article database model.
-
-    Attributes:
-        id: Primary key.
-        title: Article title.
-        content: Article body content.
-        status: Publication status (draft/published).
-        image_url: Optional URL path to the article's uploaded image.
-        created_at: Timestamp when the article was created.
-        updated_at: Timestamp when the article was last updated.
-        categories: Many-to-many relationship with Category.
-    """
-
     __tablename__ = "articles"
 
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(255), nullable=False)
-    content = Column(Text, nullable=False)
-    status = Column(String(50), nullable=False, default="draft")
+    content = Column(Text, nullable=True)
+    status = Column(String(50), default="draft")
     image_url = Column(String(500), nullable=True)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     categories = relationship(
-        "Category",
-        secondary=article_categories,
-        back_populates="articles",
+        "Category", secondary=article_categories, back_populates="articles"
     )
