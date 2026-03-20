@@ -1,11 +1,19 @@
-"""Article SQLAlchemy model."""
+"""Article model definition."""
 
 import enum
 
-from sqlalchemy import Column, DateTime, Enum as SQLEnum, Integer, String, Text
-from sqlalchemy.sql import func
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String, Table, Text, func
+from sqlalchemy.orm import relationship
 
 from app.database import Base
+
+# Association table for many-to-many relationship between articles and categories
+article_categories = Table(
+    "article_categories",
+    Base.metadata,
+    Column("article_id", Integer, ForeignKey("articles.id", ondelete="CASCADE")),
+    Column("category_id", Integer, ForeignKey("categories.id", ondelete="CASCADE")),
+)
 
 
 class ArticleStatus(str, enum.Enum):
@@ -13,10 +21,11 @@ class ArticleStatus(str, enum.Enum):
 
     draft = "draft"
     published = "published"
+    archived = "archived"
 
 
 class Article(Base):
-    """SQLAlchemy ORM model representing a news/blog article."""
+    """SQLAlchemy ORM model for articles."""
 
     __tablename__ = "articles"
 
@@ -24,6 +33,13 @@ class Article(Base):
     title = Column(String(200), nullable=False)
     body = Column(Text, nullable=False)
     author = Column(String(100), nullable=False)
-    status = Column(SQLEnum(ArticleStatus), default=ArticleStatus.draft, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    status = Column(Enum(ArticleStatus), default=ArticleStatus.draft, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    categories = relationship("Category", secondary=article_categories, back_populates="articles")
