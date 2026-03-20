@@ -1,55 +1,47 @@
-"""Root-level pytest configuration and shared fixtures."""
+"""Pytest configuration and shared fixtures."""
 
-import os
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from starlette.testclient import TestClient
 
-# Set test environment variables BEFORE importing any application modules.
-# This ensures pydantic-settings reads these values at Settings instantiation time.
-os.environ.setdefault("DATABASE_URL", "sqlite:///test.db")
-os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
-os.environ.setdefault("ENVIRONMENT", "development")
+# Import models so Base.metadata discovers them
+import app.models  # noqa: F401
 
-import pytest  # noqa: E402
-from sqlalchemy.orm import Session  # noqa: E402
-from starlette.testclient import TestClient  # noqa: E402
+from app.database import Base, get_db
+from app.main import app
 
-from app.database import Base, SessionLocal, create_tables, engine  # noqa: E402
-from app.main import app  # noqa: E402
+SQLALCHEMY_TEST_DATABASE_URL = "sqlite:///./test_temp.db"
 
-
-@pytest.fixture(scope="session", autouse=True)
-def setup_test_database() -> None:
-    """Create all tables in the test database before running the test suite.
-
-    This fixture runs once per session and ensures the schema exists.
-    """
-    create_tables()
-    yield
-    Base.metadata.drop_all(bind=engine)
+test_engine = create_engine(
+    SQLALCHEMY_TEST_DATABASE_URL, connect_args={"check_same_thread": False}
+)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 
 
-@pytest.fixture
-def client() -> TestClient:
-    """Return a synchronous TestClient wrapping the FastAPI application.
-
-    Returns:
-        TestClient: A Starlette test client for making HTTP requests.
-    """
-    return TestClient(app)
-
-
-@pytest.fixture
-def db_session() -> Session:
-    """Yield a database session connected to the test database.
-
-    The session is rolled back and closed after each test to keep
-    test cases isolated.
-
-    Yields:
-        Session: A SQLAlchemy synchronous session bound to the test engine.
-    """
-    session: Session = SessionLocal()
+@pytest.fixture(scope="function")
+def db_session():
+    """Create a fresh database session for each test."""
+    Base.metadata.create_all(bind=test_engine)
+    session = TestingSessionLocal()
     try:
         yield session
     finally:
-        session.rollback()
         session.close()
+        Base.metadata.drop_all(bind=test_engine)
+
+
+@pytest.fixture(scope="function")
+def client(db_session):
+    """Return a TestClient that uses the test db_session for all requests."""
+
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as c:
+        yield c
+    app.dependency_overrides.clear()
