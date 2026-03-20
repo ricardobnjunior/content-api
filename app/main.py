@@ -2,18 +2,8 @@
 
 from fastapi import FastAPI
 
-from app.api.router import api_router
-from app.database import create_tables
+from app.api.router import router
 
-app = FastAPI(title="Article API")
+app = FastAPI(title="Articles API")
 
-# Create tables on startup
-create_tables()
-
-app.include_router(api_router)
-
-
-@app.get("/health")
-def health_check():
-    """Health check endpoint."""
-    return {"status": "ok"}
+app.include_router(router)
