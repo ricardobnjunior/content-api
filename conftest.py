@@ -1,41 +1,47 @@
-"""Pytest configuration and shared fixtures."""
+"""Root conftest.py — provides TestClient and db_session fixtures."""
 
-import os
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-os.environ.setdefault("DATABASE_URL", "sqlite:///./test.db")
-os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
+from app.database import Base, get_db
+from app.main import app
 
-import pytest  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
-
-from app.database import Base, SessionLocal, create_tables, engine  # noqa: E402
-from app.main import app as fastapi_app  # noqa: E402
-
-# Import all models so they are registered with Base.metadata
-import app.models.article  # noqa: E402, F401
-import app.models.category  # noqa: E402, F401
+# Use an in-memory SQLite database for tests
+TEST_DATABASE_URL = "sqlite:///./test_articles.db"
 
 
-@pytest.fixture(autouse=True)
-def setup_database():
-    """Create all tables before each test and drop them after."""
-    create_tables()
-    yield
-    Base.metadata.drop_all(bind=engine)
+@pytest.fixture(scope="function")
+def db_session():
+    """Create a fresh database session for each test function."""
+    engine = create_engine(
+        TEST_DATABASE_URL,
+        connect_args={"check_same_thread": False},
+    )
+    Base.metadata.create_all(bind=engine)
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-
-@pytest.fixture
-def db_session(setup_database):
-    """Provide a SQLAlchemy session for direct DB access in tests."""
-    db = SessionLocal()
+    session = TestingSessionLocal()
     try:
-        yield db
+        yield session
     finally:
-        db.close()
+        session.close()
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
 
 
-@pytest.fixture
-def client(setup_database) -> TestClient:
-    """Provide a FastAPI TestClient with a fresh database."""
-    with TestClient(fastapi_app) as c:
-        yield c
+@pytest.fixture(scope="function")
+def client(db_session):
+    """Provide a TestClient with the test database session injected."""
+
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()

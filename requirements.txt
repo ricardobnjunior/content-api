@@ -1,8 +1,8 @@
 fastapi
-sqlalchemy
-pydantic-settings
-pydantic[email]
 uvicorn
+sqlalchemy
+pydantic
 pytest
+pytest-cov
 httpx
 starlette

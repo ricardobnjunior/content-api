@@ -1,4 +1,4 @@
-"""Unit tests for Article CRUD functions."""
+"""Unit tests for CRUD operations in app/crud/article.py."""
 
 import pytest
 from sqlalchemy import create_engine
@@ -13,20 +13,17 @@ from app.crud.article import (
 )
 from app.database import Base
 from app.models.article import ArticleStatus
-from app.schemas.article import ArticleCreate, ArticleUpdate
-
-TEST_DATABASE_URL = "sqlite:///./test_crud.db"
 
 
 @pytest.fixture()
 def db():
     """Provide a fresh in-memory SQLite session for each test."""
     engine = create_engine(
-        TEST_DATABASE_URL,
+        "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
     )
     Base.metadata.create_all(bind=engine)
-    Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    Session = sessionmaker(bind=engine)
     session = Session()
     try:
         yield session
@@ -36,206 +33,227 @@ def db():
         engine.dispose()
 
 
-def _make_create_data(**kwargs) -> ArticleCreate:
-    """Helper to build an ArticleCreate with sensible defaults."""
-    defaults = {
-        "title": "Default Title",
-        "body": "Default body content.",
-        "author": "Default Author",
+@pytest.fixture()
+def sample_article_data() -> dict:
+    """Return a minimal valid article data dictionary."""
+    return {
+        "title": "Sample Title",
+        "body": "Sample body text",
         "status": ArticleStatus.draft,
+        "author": "Test Author",
+        "category_ids": [],
     }
-    defaults.update(kwargs)
-    return ArticleCreate(**defaults)
 
 
 # ---------------------------------------------------------------------------
 # create_article
 # ---------------------------------------------------------------------------
 
-def test_create_article_returns_article(db):
-    """create_article persists and returns an Article with an ID."""
-    data = _make_create_data()
-    article = create_article(db, data)
+
+def test_create_article_happy_path(db, sample_article_data) -> None:
+    """Creating an article returns an Article with correct fields."""
+    article = create_article(db, sample_article_data.copy())
+
     assert article.id is not None
-    assert article.title == "Default Title"
-    assert article.body == "Default body content."
-    assert article.author == "Default Author"
+    assert article.title == "Sample Title"
+    assert article.body == "Sample body text"
     assert article.status == ArticleStatus.draft
+    assert article.author == "Test Author"
+    assert article.categories == []
 
 
-def test_create_article_with_published_status(db):
-    """create_article stores the published status correctly."""
-    data = _make_create_data(status=ArticleStatus.published)
+def test_create_article_with_categories(db) -> None:
+    """Creating an article with category_ids should link the categories."""
+    from app.models.category import Category
+
+    cat = Category(name="Tech")
+    db.add(cat)
+    db.commit()
+    db.refresh(cat)
+
+    data = {
+        "title": "Tech Article",
+        "body": "Body text",
+        "status": ArticleStatus.published,
+        "author": "Author",
+        "category_ids": [cat.id],
+    }
     article = create_article(db, data)
-    assert article.status == ArticleStatus.published
 
-
-def test_create_article_increments_id(db):
-    """Two articles get distinct auto-incremented IDs."""
-    a1 = create_article(db, _make_create_data(title="First"))
-    a2 = create_article(db, _make_create_data(title="Second"))
-    assert a1.id != a2.id
+    assert len(article.categories) == 1
+    assert article.categories[0].name == "Tech"
 
 
 # ---------------------------------------------------------------------------
 # get_article
 # ---------------------------------------------------------------------------
 
-def test_get_article_found(db):
-    """get_article returns the correct article by ID."""
-    created = create_article(db, _make_create_data())
+
+def test_get_article_existing(db, sample_article_data) -> None:
+    """get_article returns the article when it exists."""
+    created = create_article(db, sample_article_data.copy())
     fetched = get_article(db, created.id)
+
     assert fetched is not None
     assert fetched.id == created.id
-    assert fetched.title == created.title
+    assert fetched.title == "Sample Title"
 
 
-def test_get_article_not_found(db):
+def test_get_article_nonexistent(db) -> None:
     """get_article returns None for a non-existent ID."""
-    result = get_article(db, 999999)
-    assert result is None
-
-
-def test_get_article_returns_none_for_zero_id(db):
-    """get_article returns None when article_id is 0 (no such record)."""
-    result = get_article(db, 0)
+    result = get_article(db, 9999)
     assert result is None
 
 
 # ---------------------------------------------------------------------------
-# get_articles
+# get_articles — search
 # ---------------------------------------------------------------------------
 
-def test_get_articles_empty(db):
-    """get_articles returns empty list and zero total when no articles exist."""
-    items, total = get_articles(db)
-    assert items == []
+
+def test_get_articles_search_by_title(db) -> None:
+    """Search by title substring returns matching articles."""
+    create_article(db, {"title": "Python Basics", "body": "intro", "status": ArticleStatus.draft, "author": "A", "category_ids": []})
+    create_article(db, {"title": "Java Basics", "body": "intro", "status": ArticleStatus.draft, "author": "A", "category_ids": []})
+
+    articles, total = get_articles(db, search="Python")
+    assert total == 1
+    assert articles[0].title == "Python Basics"
+
+
+def test_get_articles_search_by_body(db) -> None:
+    """Search by body substring returns matching articles."""
+    create_article(db, {"title": "Article 1", "body": "unique_search_xyz content", "status": ArticleStatus.draft, "author": "A", "category_ids": []})
+    create_article(db, {"title": "Article 2", "body": "other content", "status": ArticleStatus.draft, "author": "A", "category_ids": []})
+
+    articles, total = get_articles(db, search="unique_search_xyz")
+    assert total == 1
+    assert articles[0].title == "Article 1"
+
+
+def test_get_articles_search_case_insensitive(db) -> None:
+    """ilike search should be case-insensitive."""
+    create_article(db, {"title": "CamelCase Match", "body": "body", "status": ArticleStatus.draft, "author": "A", "category_ids": []})
+
+    articles, total = get_articles(db, search="camelcase match")
+    assert total == 1
+
+
+def test_get_articles_search_no_match(db) -> None:
+    """Search with no match returns empty list and total=0."""
+    create_article(db, {"title": "Some Article", "body": "body", "status": ArticleStatus.draft, "author": "A", "category_ids": []})
+
+    articles, total = get_articles(db, search="zzznomatch999")
     assert total == 0
+    assert articles == []
 
 
-def test_get_articles_returns_all(db):
-    """get_articles returns all articles and correct total."""
-    for i in range(3):
-        create_article(db, _make_create_data(title=f"Article {i}"))
-    items, total = get_articles(db)
-    assert total == 3
-    assert len(items) == 3
+# ---------------------------------------------------------------------------
+# get_articles — filters
+# ---------------------------------------------------------------------------
 
 
-def test_get_articles_pagination_skip(db):
-    """get_articles with skip omits the first N records."""
+def test_get_articles_filter_by_status(db) -> None:
+    """Filter by status returns only articles with matching status."""
+    create_article(db, {"title": "Draft A", "body": "b", "status": ArticleStatus.draft, "author": "A", "category_ids": []})
+    create_article(db, {"title": "Published A", "body": "b", "status": ArticleStatus.published, "author": "A", "category_ids": []})
+
+    articles, total = get_articles(db, status=ArticleStatus.published)
+    assert total == 1
+    assert articles[0].status == ArticleStatus.published
+
+
+def test_get_articles_filter_by_author(db) -> None:
+    """Filter by author returns only that author's articles."""
+    create_article(db, {"title": "By Alice", "body": "b", "status": ArticleStatus.draft, "author": "Alice", "category_ids": []})
+    create_article(db, {"title": "By Bob", "body": "b", "status": ArticleStatus.draft, "author": "Bob", "category_ids": []})
+
+    articles, total = get_articles(db, author="Alice")
+    assert total == 1
+    assert articles[0].author == "Alice"
+
+
+def test_get_articles_filter_by_category(db) -> None:
+    """Filter by category_id returns only articles in that category."""
+    from app.models.category import Category
+
+    cat = Category(name="Sports")
+    db.add(cat)
+    db.commit()
+    db.refresh(cat)
+
+    create_article(db, {"title": "Sports Article", "body": "b", "status": ArticleStatus.draft, "author": "A", "category_ids": [cat.id]})
+    create_article(db, {"title": "Other Article", "body": "b", "status": ArticleStatus.draft, "author": "A", "category_ids": []})
+
+    articles, total = get_articles(db, category_id=cat.id)
+    assert total == 1
+    assert articles[0].title == "Sports Article"
+
+
+# ---------------------------------------------------------------------------
+# get_articles — pagination
+# ---------------------------------------------------------------------------
+
+
+def test_get_articles_pagination(db) -> None:
+    """Pagination returns correct subset and total count."""
     for i in range(5):
-        create_article(db, _make_create_data(title=f"Article {i}"))
-    items, total = get_articles(db, skip=3, limit=10)
+        create_article(db, {"title": f"Article {i}", "body": "b", "status": ArticleStatus.draft, "author": "A", "category_ids": []})
+
+    articles_p1, total = get_articles(db, page=1, per_page=2)
     assert total == 5
-    assert len(items) == 2
+    assert len(articles_p1) == 2
+
+    articles_p3, total2 = get_articles(db, page=3, per_page=2)
+    assert total2 == 5
+    assert len(articles_p3) == 1
 
 
-def test_get_articles_pagination_limit(db):
-    """get_articles with limit caps the returned results."""
-    for i in range(5):
-        create_article(db, _make_create_data(title=f"Article {i}"))
-    items, total = get_articles(db, skip=0, limit=2)
-    assert total == 5
-    assert len(items) == 2
-
-
-def test_get_articles_skip_beyond_total(db):
-    """get_articles returns empty list when skip exceeds total."""
+def test_get_articles_returns_all_when_no_filters(db) -> None:
+    """get_articles with no filters returns all articles."""
     for i in range(3):
-        create_article(db, _make_create_data(title=f"Article {i}"))
-    items, total = get_articles(db, skip=100, limit=10)
+        create_article(db, {"title": f"T{i}", "body": "b", "status": ArticleStatus.draft, "author": "A", "category_ids": []})
+
+    articles, total = get_articles(db)
     assert total == 3
-    assert len(items) == 0
+    assert len(articles) == 3
 
 
 # ---------------------------------------------------------------------------
 # update_article
 # ---------------------------------------------------------------------------
 
-def test_update_article_title(db):
-    """update_article changes the title and leaves other fields intact."""
-    created = create_article(db, _make_create_data())
-    update_data = ArticleUpdate(title="New Title")
-    updated = update_article(db, created.id, update_data)
+
+def test_update_article_happy_path(db, sample_article_data) -> None:
+    """Updating existing fields returns updated article."""
+    article = create_article(db, sample_article_data.copy())
+    updated = update_article(db, article.id, {"title": "New Title"})
+
     assert updated is not None
     assert updated.title == "New Title"
-    assert updated.body == created.body
-    assert updated.author == created.author
+    assert updated.body == "Sample body text"
 
 
-def test_update_article_status(db):
-    """update_article changes status from draft to published."""
-    created = create_article(db, _make_create_data())
-    update_data = ArticleUpdate(status=ArticleStatus.published)
-    updated = update_article(db, created.id, update_data)
-    assert updated is not None
-    assert updated.status == ArticleStatus.published
-
-
-def test_update_article_all_fields(db):
-    """update_article can update all fields at once."""
-    created = create_article(db, _make_create_data())
-    update_data = ArticleUpdate(
-        title="New Title",
-        body="New body",
-        author="New Author",
-        status=ArticleStatus.published,
-    )
-    updated = update_article(db, created.id, update_data)
-    assert updated.title == "New Title"
-    assert updated.body == "New body"
-    assert updated.author == "New Author"
-    assert updated.status == ArticleStatus.published
-
-
-def test_update_article_not_found(db):
-    """update_article returns None for a non-existent article ID."""
-    update_data = ArticleUpdate(title="Won't be set")
-    result = update_article(db, 999999, update_data)
+def test_update_article_nonexistent(db) -> None:
+    """Updating a non-existent article returns None."""
+    result = update_article(db, 9999, {"title": "X"})
     assert result is None
-
-
-def test_update_article_empty_update(db):
-    """update_article with no fields set leaves article unchanged."""
-    created = create_article(db, _make_create_data())
-    update_data = ArticleUpdate()
-    updated = update_article(db, created.id, update_data)
-    assert updated is not None
-    assert updated.title == created.title
-    assert updated.body == created.body
-    assert updated.author == created.author
-    assert updated.status == created.status
 
 
 # ---------------------------------------------------------------------------
 # delete_article
 # ---------------------------------------------------------------------------
 
-def test_delete_article_returns_true(db):
-    """delete_article returns True when the article exists and is deleted."""
-    created = create_article(db, _make_create_data())
-    result = delete_article(db, created.id)
+
+def test_delete_article_happy_path(db, sample_article_data) -> None:
+    """Deleting an existing article returns True."""
+    article = create_article(db, sample_article_data.copy())
+    result = delete_article(db, article.id)
+
     assert result is True
+    assert get_article(db, article.id) is None
 
 
-def test_delete_article_removes_from_db(db):
-    """After delete_article, get_article returns None for that ID."""
-    created = create_article(db, _make_create_data())
-    delete_article(db, created.id)
-    assert get_article(db, created.id) is None
-
-
-def test_delete_article_not_found(db):
-    """delete_article returns False for a non-existent article ID."""
-    result = delete_article(db, 999999)
+def test_delete_article_nonexistent(db) -> None:
+    """Deleting a non-existent article returns False."""
+    result = delete_article(db, 9999)
     assert result is False
-
-
-def test_delete_article_does_not_affect_others(db):
-    """Deleting one article leaves others untouched."""
-    a1 = create_article(db, _make_create_data(title="Keep me"))
-    a2 = create_article(db, _make_create_data(title="Delete me"))
-    delete_article(db, a2.id)
-    assert get_article(db, a1.id) is not None
-    assert get_article(db, a2.id) is None

@@ -2,14 +2,7 @@
 
 from fastapi import FastAPI
 
-from app.api.router import api_router
+from app.api.router import router
 
-app = FastAPI(title="Blog API")
-
-app.include_router(api_router)
-
-
-@app.get("/health")
-def health_check():
-    """Health check endpoint."""
-    return {"status": "ok"}
+app = FastAPI(title="Articles API")
+app.include_router(router)

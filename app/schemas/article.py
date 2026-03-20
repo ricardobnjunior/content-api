@@ -1,12 +1,20 @@
 """Pydantic schemas for Article endpoints."""
 
+import math
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
 from app.models.article import ArticleStatus
-from app.schemas.category import CategoryResponse
+
+
+class CategoryRef(BaseModel):
+    """Minimal category reference used inside article responses."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
 
 
 class ArticleCreate(BaseModel):
@@ -14,40 +22,47 @@ class ArticleCreate(BaseModel):
 
     title: str
     body: str
+    status: ArticleStatus = ArticleStatus.draft
     author: str
-    status: ArticleStatus = ArticleStatus.DRAFT
     category_ids: list[int] = []
 
 
 class ArticleUpdate(BaseModel):
     """Schema for updating an existing article."""
 
-    title: Optional[str] = None
-    body: Optional[str] = None
-    author: Optional[str] = None
-    status: Optional[ArticleStatus] = None
-    category_ids: list[int] = []
+    title: str | None = None
+    body: str | None = None
+    status: ArticleStatus | None = None
+    author: str | None = None
+    category_ids: list[int] | None = None
 
 
 class ArticleResponse(BaseModel):
-    """Schema for article responses."""
+    """Schema for a single article in API responses."""
 
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     title: str
     body: str
-    author: str
     status: ArticleStatus
+    author: str
+    categories: list[CategoryRef] = []
     created_at: datetime
     updated_at: datetime
-    categories: list[CategoryResponse] = []
+
+
+class PaginationMeta(BaseModel):
+    """Pagination metadata included in list responses."""
+
+    total: int
+    page: int
+    per_page: int
+    pages: int
 
 
 class ArticleList(BaseModel):
-    """Schema for paginated article list responses."""
+    """Schema for paginated list of articles."""
 
-    model_config = ConfigDict(from_attributes=True)
-
-    total: int
     items: list[ArticleResponse]
+    meta: PaginationMeta
