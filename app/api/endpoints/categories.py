@@ -1,140 +1,109 @@
-"""REST API endpoints for category management."""
+"""REST endpoints for the Category resource."""
 
-from sqlalchemy.exc import IntegrityError
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from fastapi import APIRouter, Depends, HTTPException, status
-
-from app.crud.category import (
-    create_category,
-    delete_category,
-    get_categories,
-    get_category,
-    update_category,
-)
 from app.database import get_db
-from app.schemas.category import CategoryCreate, CategoryResponse, CategoryUpdate
+from app.models.article import Category
 
 router = APIRouter(prefix="/categories", tags=["categories"])
 
 
-@router.post("/", response_model=CategoryResponse, status_code=status.HTTP_201_CREATED)
-def create_category_endpoint(
-    data: CategoryCreate,
-    db: Session = Depends(get_db),
-) -> CategoryResponse:
+class CategoryCreate(BaseModel):
+    """Schema for creating a category.
+
+    Attributes:
+        name: Unique category name.
+    """
+
+    name: str
+
+
+class CategoryResponse(BaseModel):
+    """Schema for category responses.
+
+    Attributes:
+        id: Category identifier.
+        name: Category name.
+    """
+
+    id: int
+    name: str
+
+    model_config = {"from_attributes": True}
+
+
+@router.get("/", response_model=list[CategoryResponse])
+def list_categories(db: Session = Depends(get_db)) -> list[CategoryResponse]:
+    """List all categories.
+
+    Args:
+        db: Database session.
+
+    Returns:
+        List of all categories.
+    """
+    return db.query(Category).all()
+
+
+@router.post("/", response_model=CategoryResponse, status_code=201)
+def create_category(data: CategoryCreate, db: Session = Depends(get_db)) -> CategoryResponse:
     """Create a new category.
 
     Args:
         data: Category creation payload.
-        db: Database session (injected).
+        db: Database session.
 
     Returns:
-        The newly created category.
+        Created category data.
 
     Raises:
         HTTPException: 409 if a category with the same name already exists.
     """
-    try:
-        return create_category(db, data)
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A category with this name already exists.",
-        ) from None
-
-
-@router.get("/", response_model=list[CategoryResponse])
-def list_categories_endpoint(
-    skip: int = 0,
-    limit: int = 50,
-    db: Session = Depends(get_db),
-) -> list[CategoryResponse]:
-    """Retrieve a list of categories.
-
-    Args:
-        skip: Number of records to skip for pagination.
-        limit: Maximum number of records to return.
-        db: Database session (injected).
-
-    Returns:
-        A list of category objects.
-    """
-    return get_categories(db, skip=skip, limit=limit)
+    existing = db.query(Category).filter(Category.name == data.name).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Category already exists")
+    category = Category(name=data.name)
+    db.add(category)
+    db.commit()
+    db.refresh(category)
+    return category
 
 
 @router.get("/{category_id}", response_model=CategoryResponse)
-def get_category_endpoint(
-    category_id: int,
-    db: Session = Depends(get_db),
-) -> CategoryResponse:
-    """Retrieve a category by ID.
+def get_category(category_id: int, db: Session = Depends(get_db)) -> CategoryResponse:
+    """Retrieve a single category by ID.
 
     Args:
-        category_id: The ID of the category to retrieve.
-        db: Database session (injected).
+        category_id: Category primary key.
+        db: Database session.
 
     Returns:
-        The category with the given ID.
+        Category data.
 
     Raises:
-        HTTPException: 404 if the category is not found.
+        HTTPException: 404 if the category does not exist.
     """
-    category = get_category(db, category_id)
-    if category is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Category {category_id} not found.",
-        )
+    category = db.query(Category).filter(Category.id == category_id).first()
+    if not category:
+        raise HTTPException(status_code=404, detail="Category not found")
     return category
 
 
-@router.put("/{category_id}", response_model=CategoryResponse)
-def update_category_endpoint(
-    category_id: int,
-    data: CategoryUpdate,
-    db: Session = Depends(get_db),
-) -> CategoryResponse:
-    """Update an existing category.
+@router.delete("/{category_id}", status_code=204)
+def delete_category(category_id: int, db: Session = Depends(get_db)) -> None:
+    """Delete a category.
 
     Args:
-        category_id: The ID of the category to update.
-        data: Category update payload.
-        db: Database session (injected).
-
-    Returns:
-        The updated category.
+        category_id: Category primary key.
+        db: Database session.
 
     Raises:
-        HTTPException: 404 if the category is not found.
+        HTTPException: 404 if the category does not exist.
     """
-    category = update_category(db, category_id, data)
-    if category is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Category {category_id} not found.",
-        )
-    return category
-
-
-@router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_category_endpoint(
-    category_id: int,
-    db: Session = Depends(get_db),
-) -> None:
-    """Delete a category by ID.
-
-    Args:
-        category_id: The ID of the category to delete.
-        db: Database session (injected).
-
-    Raises:
-        HTTPException: 404 if the category is not found.
-    """
-    deleted = delete_category(db, category_id)
-    if not deleted:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Category {category_id} not found.",
-        )
+    category = db.query(Category).filter(Category.id == category_id).first()
+    if not category:
+        raise HTTPException(status_code=404, detail="Category not found")
+    db.delete(category)
+    db.commit()
