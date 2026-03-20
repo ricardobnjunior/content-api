@@ -1,183 +1,211 @@
-"""Unit tests for the _article_to_dict helper function."""
+"""Unit tests for the article_to_dict helper and generate_csv generator."""
 
+import csv
+import io
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
 
 
-COLUMN_NAMES = ["id", "title", "content", "status", "image_url", "created_at", "updated_at"]
+# ---------------------------------------------------------------------------
+# Helper to build a fake Article column descriptor
+# ---------------------------------------------------------------------------
 
-
-def _make_column_mock(name):
+def _make_column(name):
     col = MagicMock()
     col.name = name
     return col
 
 
-def _make_article_mock(**kwargs):
-    article = MagicMock()
-    defaults = {
-        "id": 1,
-        "title": "Title",
-        "content": "Content",
-        "status": "published",
-        "image_url": None,
-        "created_at": datetime(2024, 1, 1, 0, 0, 0),
-        "updated_at": datetime(2024, 1, 2, 0, 0, 0),
-    }
-    defaults.update(kwargs)
-    for k, v in defaults.items():
-        setattr(article, k, v)
-    return article
+def _build_article_mock(fields: dict):
+    """
+    Build a MagicMock Article whose __table__.columns iterates over `fields`.
+    Each key in `fields` becomes a column name; the value is the attribute value.
+    """
+    article = MagicMock(spec_set=list(fields.keys()))
+    columns = [_make_column(name) for name in fields]
 
+    # Patch Article.__table__.columns at the module level
+    for name, value in fields.items():
+        setattr(article, name, value)
+
+    return article, columns
+
+
+# ---------------------------------------------------------------------------
+# We test article_to_dict by patching Article.__table__.columns
+# ---------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
-def patch_table_columns():
-    """Patch Article.__table__.columns for all tests in this module."""
-    columns = [_make_column_mock(n) for n in COLUMN_NAMES]
-    with patch("app.api.endpoints.export.Article.__table__.columns", columns):
-        yield
+def patch_article_table():
+    """Patch Article.__table__ so tests don't need a real database."""
+    columns = [
+        _make_column("id"),
+        _make_column("title"),
+        _make_column("content"),
+        _make_column("status"),
+        _make_column("image_url"),
+        _make_column("created_at"),
+        _make_column("updated_at"),
+    ]
+    with patch("app.api.endpoints.export.Article") as mock_article_cls:
+        mock_table = MagicMock()
+        mock_table.columns = columns
+        mock_article_cls.__table__ = mock_table
+        yield mock_article_cls, columns
 
-
-# Import after patching is set up via autouse fixture
-# We need to import inside tests because the module-level patch must be active.
 
 class TestArticleToDict:
-    def test_returns_dict(self):
-        from app.api.endpoints.export import _article_to_dict
-        article = _make_article_mock()
-        result = _article_to_dict(article)
+    """Tests for the article_to_dict() helper."""
+
+    def test_returns_dict(self, patch_article_table):
+        """article_to_dict must return a dict."""
+        from app.api.endpoints.export import article_to_dict
+
+        _, columns = patch_article_table
+        article = MagicMock()
+        article.id = 1
+        article.title = "T"
+        article.content = "C"
+        article.status = "published"
+        article.image_url = None
+        article.created_at = datetime(2024, 1, 1)
+        article.updated_at = datetime(2024, 1, 2)
+
+        result = article_to_dict(article)
         assert isinstance(result, dict)
 
-    def test_all_columns_present(self):
-        from app.api.endpoints.export import _article_to_dict
-        article = _make_article_mock()
-        result = _article_to_dict(article)
-        for name in COLUMN_NAMES:
-            assert name in result
+    def test_all_columns_present(self, patch_article_table):
+        """Every column name must be a key in the returned dict."""
+        from app.api.endpoints.export import article_to_dict
 
-    def test_datetime_converted_to_iso(self):
-        from app.api.endpoints.export import _article_to_dict
-        dt = datetime(2024, 6, 15, 10, 30, 0)
-        article = _make_article_mock(created_at=dt, updated_at=dt)
-        result = _article_to_dict(article)
-        assert result["created_at"] == "2024-06-15T10:30:00"
-        assert result["updated_at"] == "2024-06-15T10:30:00"
+        _, columns = patch_article_table
+        article = MagicMock()
+        article.id = 1
+        article.title = "T"
+        article.content = "C"
+        article.status = "published"
+        article.image_url = None
+        article.created_at = datetime(2024, 1, 1)
+        article.updated_at = datetime(2024, 1, 2)
 
-    def test_non_datetime_fields_unchanged(self):
-        from app.api.endpoints.export import _article_to_dict
-        article = _make_article_mock(id=99, title="My Title", status="draft")
-        result = _article_to_dict(article)
-        assert result["id"] == 99
-        assert result["title"] == "My Title"
-        assert result["status"] == "draft"
+        result = article_to_dict(article)
+        for col in columns:
+            assert col.name in result
 
-    def test_null_image_url_preserved(self):
-        from app.api.endpoints.export import _article_to_dict
-        article = _make_article_mock(image_url=None)
-        result = _article_to_dict(article)
+    def test_datetime_converted_to_isoformat(self, patch_article_table):
+        """Datetime values must be converted to ISO 8601 strings."""
+        from app.api.endpoints.export import article_to_dict
+
+        article = MagicMock()
+        article.id = 1
+        article.title = "T"
+        article.content = "C"
+        article.status = "published"
+        article.image_url = None
+        article.created_at = datetime(2024, 5, 20, 14, 30, 0)
+        article.updated_at = datetime(2024, 5, 21, 8, 0, 0)
+
+        result = article_to_dict(article)
+        assert result["created_at"] == "2024-05-20T14:30:00"
+        assert result["updated_at"] == "2024-05-21T08:00:00"
+
+    def test_none_image_url_preserved(self, patch_article_table):
+        """None values must remain None (no isoformat conversion attempted)."""
+        from app.api.endpoints.export import article_to_dict
+
+        article = MagicMock()
+        article.id = 2
+        article.title = "T"
+        article.content = "C"
+        article.status = "draft"
+        article.image_url = None
+        article.created_at = datetime(2024, 1, 1)
+        article.updated_at = datetime(2024, 1, 1)
+
+        result = article_to_dict(article)
         assert result["image_url"] is None
 
-    def test_image_url_with_value(self):
-        from app.api.endpoints.export import _article_to_dict
-        article = _make_article_mock(image_url="http://example.com/img.png")
-        result = _article_to_dict(article)
-        assert result["image_url"] == "http://example.com/img.png"
+    def test_string_values_unchanged(self, patch_article_table):
+        """Non-datetime, non-None values must pass through unchanged."""
+        from app.api.endpoints.export import article_to_dict
 
-    def test_string_status_not_converted(self):
-        from app.api.endpoints.export import _article_to_dict
-        article = _make_article_mock(status="published")
-        result = _article_to_dict(article)
-        assert isinstance(result["status"], str)
-        assert result["status"] == "published"
+        article = MagicMock()
+        article.id = 10
+        article.title = "My Title"
+        article.content = "Body"
+        article.status = "published"
+        article.image_url = "http://img.com/a.png"
+        article.created_at = datetime(2024, 1, 1)
+        article.updated_at = datetime(2024, 1, 1)
 
-
-class TestBuildCSVResponse:
-    def test_returns_streaming_response(self):
-        from fastapi.responses import StreamingResponse
-        from app.api.endpoints.export import _build_csv_response
-        result = _build_csv_response([])
-        assert isinstance(result, StreamingResponse)
-
-    def test_media_type_is_csv(self):
-        from app.api.endpoints.export import _build_csv_response
-        result = _build_csv_response([])
-        assert result.media_type == "text/csv"
-
-    def test_content_disposition_header(self):
-        from app.api.endpoints.export import _build_csv_response
-        result = _build_csv_response([])
-        assert 'filename="articles.csv"' in result.headers["content-disposition"]
-
-    def test_empty_input_produces_header_only(self):
-        from app.api.endpoints.export import _build_csv_response
-        import io as _io
-        import csv as _csv
-
-        response = _build_csv_response([])
-        # Collect stream
-        body = b"".join(response.body_iterator)
-        text = body.decode("utf-8")
-        lines = text.strip().splitlines()
-        assert len(lines) == 1
-        assert "id" in lines[0]
-
-    def test_one_article_produces_header_plus_one_row(self):
-        from app.api.endpoints.export import _build_csv_response
-        article_dict = {
-            "id": 1,
-            "title": "T",
-            "content": "C",
-            "status": "published",
-            "image_url": None,
-            "created_at": "2024-01-01T00:00:00",
-            "updated_at": "2024-01-02T00:00:00",
-        }
-        response = _build_csv_response([article_dict])
-        body = b"".join(response.body_iterator)
-        lines = body.decode("utf-8").strip().splitlines()
-        assert len(lines) == 2
+        result = article_to_dict(article)
+        assert result["id"] == 10
+        assert result["title"] == "My Title"
+        assert result["image_url"] == "http://img.com/a.png"
 
 
-class TestBuildJSONResponse:
-    def test_returns_streaming_response(self):
-        from fastapi.responses import StreamingResponse
-        from app.api.endpoints.export import _build_json_response
-        result = _build_json_response([])
-        assert isinstance(result, StreamingResponse)
+class TestGenerateCsv:
+    """Tests for the generate_csv() streaming generator."""
 
-    def test_media_type_is_json(self):
-        from app.api.endpoints.export import _build_json_response
-        result = _build_json_response([])
-        assert result.media_type == "application/json"
+    def test_yields_header_when_empty(self, patch_article_table):
+        """generate_csv with no articles must yield at least a header chunk."""
+        from app.api.endpoints.export import generate_csv
 
-    def test_content_disposition_header(self):
-        from app.api.endpoints.export import _build_json_response
-        result = _build_json_response([])
-        assert 'filename="articles.json"' in result.headers["content-disposition"]
+        chunks = list(generate_csv([]))
+        assert len(chunks) >= 1
+        header_text = "".join(chunks)
+        assert "id" in header_text
+        assert "title" in header_text
 
-    def test_empty_list_returns_empty_json_array(self):
-        import json as _json
-        from app.api.endpoints.export import _build_json_response
-        response = _build_json_response([])
-        body = b"".join(response.body_iterator)
-        data = _json.loads(body.decode("utf-8"))
-        assert data == []
+    def test_yields_one_chunk_per_article_plus_header(self, patch_article_table):
+        """generate_csv must yield header + one chunk per article."""
+        from app.api.endpoints.export import generate_csv
 
-    def test_articles_serialized_correctly(self):
-        import json as _json
-        from app.api.endpoints.export import _build_json_response
-        articles = [
-            {"id": 1, "title": "A", "content": "B", "status": "draft",
-             "image_url": None, "created_at": "2024-01-01T00:00:00", "updated_at": "2024-01-02T00:00:00"},
-            {"id": 2, "title": "C", "content": "D", "status": "published",
-             "image_url": "http://x.com/img.png", "created_at": "2024-02-01T00:00:00", "updated_at": "2024-02-02T00:00:00"},
-        ]
-        response = _build_json_response(articles)
-        body = b"".join(response.body_iterator)
-        data = _json.loads(body.decode("utf-8"))
-        assert len(data) == 2
-        assert data[0]["title"] == "A"
-        assert data[1]["title"] == "C"
-        assert data[1]["image_url"] == "http://x.com/img.png"
+        articles = []
+        for i in range(3):
+            a = MagicMock()
+            a.id = i
+            a.title = f"Article {i}"
+            a.content = "C"
+            a.status = "published"
+            a.image_url = None
+            a.created_at = datetime(2024, 1, 1)
+            a.updated_at = datetime(2024, 1, 1)
+            articles.append(a)
+
+        chunks = list(generate_csv(articles))
+        # 1 header + 3 data chunks
+        assert len(chunks) == 4
+
+    def test_output_is_valid_csv(self, patch_article_table):
+        """Concatenated chunks must be parseable as valid CSV."""
+        from app.api.endpoints.export import generate_csv
+
+        article = MagicMock()
+        article.id = 1
+        article.title = "CSV Article"
+        article.content = "Content, with comma"
+        article.status = "published"
+        article.image_url = None
+        article.created_at = datetime(2024, 2, 15, 10, 0, 0)
+        article.updated_at = datetime(2024, 2, 16, 10, 0, 0)
+
+        full_csv = "".join(generate_csv([article]))
+        reader = csv.reader(io.StringIO(full_csv))
+        rows = list(reader)
+        assert len(rows) == 2
+        assert rows[0][0] == "id"  # header first column
+
+    def test_header_columns_match_article_table(self, patch_article_table):
+        """Header row must list exactly the Article table column names."""
+        from app.api.endpoints.export import generate_csv
+
+        _, columns = patch_article_table
+        full_csv = "".join(generate_csv([]))
+        reader = csv.reader(io.StringIO(full_csv))
+        rows = [r for r in reader if r]
+        header = rows[0]
+        expected = [col.name for col in columns]
+        assert header == expected

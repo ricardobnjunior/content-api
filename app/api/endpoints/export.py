@@ -3,7 +3,7 @@
 import csv
 import io
 import json
-from datetime import datetime
+from typing import Generator
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -15,40 +15,73 @@ from app.models.article import Article
 router = APIRouter()
 
 
-def _article_to_dict(article: Article) -> dict:
-    """Convert an Article ORM instance to a serializable dictionary.
+def article_to_dict(article: Article) -> dict:
+    """Convert an Article SQLAlchemy instance to a plain dict.
 
     Args:
-        article: SQLAlchemy Article model instance.
+        article: The Article ORM instance.
 
     Returns:
-        Dictionary with all article column values, datetime fields as ISO strings.
+        A dict with all column values. Datetime fields are converted
+        to ISO 8601 strings.
     """
     result = {}
     for column in Article.__table__.columns:
         value = getattr(article, column.name)
-        if isinstance(value, datetime):
+        if hasattr(value, "isoformat"):
             value = value.isoformat()
         result[column.name] = value
     return result
 
 
-@router.get("/articles")
+def generate_csv(articles: list) -> Generator[str, None, None]:
+    """Generate CSV rows as a streaming generator.
+
+    Yields the header row first, then one row per article.
+
+    Args:
+        articles: List of Article ORM instances.
+
+    Yields:
+        CSV-formatted string chunks.
+    """
+    columns = [column.name for column in Article.__table__.columns]
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+
+    # Write header
+    writer.writerow(columns)
+    yield buffer.getvalue()
+    buffer.seek(0)
+    buffer.truncate(0)
+
+    # Write data rows
+    for article in articles:
+        row_dict = article_to_dict(article)
+        writer.writerow([row_dict.get(col) for col in columns])
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+
+
+@router.get("/articles", summary="Export all articles")
 def export_articles(
     format: str = Query(..., description="Export format: 'csv' or 'json'"),
     db: Session = Depends(get_db),
 ) -> StreamingResponse:
-    """Export all articles as CSV or JSON file download.
+    """Export all articles in CSV or JSON format.
 
     Args:
-        format: The export format, must be 'csv' or 'json'.
-        db: SQLAlchemy database session injected by FastAPI.
+        format: The desired export format. Must be 'csv' or 'json'.
+        db: SQLAlchemy database session (injected).
 
     Returns:
-        StreamingResponse with the file contents and appropriate headers.
+        A StreamingResponse with the serialized articles and appropriate
+        Content-Type and Content-Disposition headers.
 
     Raises:
-        HTTPException: 400 if format is not 'csv' or 'json'.
+        HTTPException: 400 if the format parameter is not 'csv' or 'json'.
     """
     if format not in ("csv", "json"):
         raise HTTPException(
@@ -57,54 +90,23 @@ def export_articles(
         )
 
     articles = db.query(Article).all()
-    article_dicts = [_article_to_dict(article) for article in articles]
 
     if format == "csv":
-        return _build_csv_response(article_dicts)
-    else:
-        return _build_json_response(article_dicts)
+        return StreamingResponse(
+            generate_csv(articles),
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="articles.csv"'},
+        )
 
+    # JSON format
+    data = [article_to_dict(article) for article in articles]
+    json_bytes = json.dumps(data).encode("utf-8")
 
-def _build_csv_response(article_dicts: list[dict]) -> StreamingResponse:
-    """Build a StreamingResponse containing CSV data.
-
-    Args:
-        article_dicts: List of article dictionaries with serializable values.
-
-    Returns:
-        StreamingResponse with text/csv content type and attachment header.
-    """
-    fieldnames = ["id", "title", "content", "status", "image_url", "created_at", "updated_at"]
-
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(fieldnames)
-
-    for article in article_dicts:
-        writer.writerow([article.get(field) for field in fieldnames])
-
-    output.seek(0)
+    def json_generator():
+        yield json_bytes
 
     return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="articles.csv"'},
-    )
-
-
-def _build_json_response(article_dicts: list[dict]) -> StreamingResponse:
-    """Build a StreamingResponse containing JSON data.
-
-    Args:
-        article_dicts: List of article dictionaries with serializable values.
-
-    Returns:
-        StreamingResponse with application/json content type and attachment header.
-    """
-    json_content = json.dumps(article_dicts)
-
-    return StreamingResponse(
-        iter([json_content]),
+        json_generator(),
         media_type="application/json",
         headers={"Content-Disposition": 'attachment; filename="articles.json"'},
     )

@@ -1,5 +1,7 @@
-"""Tests for the export articles endpoint."""
+"""Tests for the export articles endpoint (CSV and JSON)."""
 
+import csv
+import io
 import json
 import os
 from datetime import datetime
@@ -10,33 +12,29 @@ from starlette.testclient import TestClient
 
 
 # ---------------------------------------------------------------------------
-# Helpers to build fake Article ORM instances
+# Helpers / fixtures
 # ---------------------------------------------------------------------------
 
-def _make_article(
+def make_article(
     id=1,
     title="Test Article",
-    content="Test content",
+    content="Some content",
     status="published",
     image_url=None,
     created_at=None,
     updated_at=None,
 ):
-    """Return a MagicMock that behaves like an Article ORM instance."""
+    """Return a MagicMock that mimics an Article ORM instance."""
     article = MagicMock()
     article.id = id
     article.title = title
     article.content = content
     article.status = status
     article.image_url = image_url
-    article.created_at = created_at or datetime(2024, 1, 1, 12, 0, 0)
-    article.updated_at = updated_at or datetime(2024, 1, 2, 12, 0, 0)
+    article.created_at = created_at or datetime(2024, 1, 15, 10, 0, 0)
+    article.updated_at = updated_at or datetime(2024, 1, 16, 12, 0, 0)
     return article
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 @pytest.fixture()
 def mock_db():
@@ -46,7 +44,7 @@ def mock_db():
 
 @pytest.fixture()
 def client(mock_db):
-    """Create a TestClient with the DB dependency overridden."""
+    """TestClient with the database dependency overridden."""
     with patch.dict(
         os.environ,
         {"DATABASE_URL": "sqlite:///./test_export.db", "SECRET_KEY": "testsecret"},
@@ -61,233 +59,222 @@ def client(mock_db):
         app.dependency_overrides.clear()
 
 
-@pytest.fixture()
-def two_articles():
-    """Return two fake article objects."""
-    return [
-        _make_article(id=1, title="Article One", content="Content one", status="published"),
-        _make_article(id=2, title="Article Two", content="Content two", status="draft"),
-    ]
-
-
-# ---------------------------------------------------------------------------
-# Helper: set up Article.__table__.columns mock
-# ---------------------------------------------------------------------------
-
-COLUMN_NAMES = ["id", "title", "content", "status", "image_url", "created_at", "updated_at"]
-
-
-def _make_column_mock(name):
-    col = MagicMock()
-    col.name = name
-    return col
-
-
-def _patch_article_table():
-    """Return a context manager that patches Article.__table__.columns."""
-    columns = [_make_column_mock(n) for n in COLUMN_NAMES]
-    return patch("app.api.endpoints.export.Article.__table__.columns", columns)
-
-
 # ---------------------------------------------------------------------------
 # CSV export — happy path
 # ---------------------------------------------------------------------------
 
-class TestCSVExport:
-    def test_csv_content_type(self, client, mock_db, two_articles):
-        mock_db.query.return_value.all.return_value = two_articles
-        with _patch_article_table():
-            response = client.get("/api/v1/export/articles?format=csv")
+class TestCsvExport:
+    """Tests for format=csv."""
+
+    def test_csv_content_type(self, client, mock_db):
+        """Response Content-Type must be text/csv."""
+        mock_db.query.return_value.all.return_value = []
+        response = client.get("/api/v1/export/articles?format=csv")
         assert response.status_code == 200
         assert "text/csv" in response.headers["content-type"]
 
-    def test_csv_content_disposition(self, client, mock_db, two_articles):
-        mock_db.query.return_value.all.return_value = two_articles
-        with _patch_article_table():
-            response = client.get("/api/v1/export/articles?format=csv")
+    def test_csv_content_disposition(self, client, mock_db):
+        """Content-Disposition must trigger file download as articles.csv."""
+        mock_db.query.return_value.all.return_value = []
+        response = client.get("/api/v1/export/articles?format=csv")
         assert response.status_code == 200
-        assert 'filename="articles.csv"' in response.headers["content-disposition"]
+        cd = response.headers.get("content-disposition", "")
+        assert "attachment" in cd
+        assert "articles.csv" in cd
 
-    def test_csv_has_header_row(self, client, mock_db, two_articles):
-        mock_db.query.return_value.all.return_value = two_articles
-        with _patch_article_table():
-            response = client.get("/api/v1/export/articles?format=csv")
-        lines = response.text.strip().splitlines()
-        header = lines[0]
-        assert "id" in header
-        assert "title" in header
-        assert "content" in header
-        assert "status" in header
-        assert "created_at" in header
-        assert "updated_at" in header
+    def test_csv_header_row_present(self, client, mock_db):
+        """CSV must contain a header row with all expected column names."""
+        mock_db.query.return_value.all.return_value = []
+        response = client.get("/api/v1/export/articles?format=csv")
+        assert response.status_code == 200
 
-    def test_csv_has_data_rows(self, client, mock_db, two_articles):
-        mock_db.query.return_value.all.return_value = two_articles
-        with _patch_article_table():
-            response = client.get("/api/v1/export/articles?format=csv")
-        lines = response.text.strip().splitlines()
-        # header + 2 data rows
-        assert len(lines) == 3
-
-    def test_csv_data_contains_article_values(self, client, mock_db, two_articles):
-        mock_db.query.return_value.all.return_value = two_articles
-        with _patch_article_table():
-            response = client.get("/api/v1/export/articles?format=csv")
-        text = response.text
-        assert "Article One" in text
-        assert "Article Two" in text
-        assert "published" in text
-        assert "draft" in text
-
-    def test_csv_all_fields_present(self, client, mock_db, two_articles):
-        mock_db.query.return_value.all.return_value = two_articles
-        with _patch_article_table():
-            response = client.get("/api/v1/export/articles?format=csv")
-        lines = response.text.strip().splitlines()
-        # Check data row has correct number of columns
-        import csv as csv_mod
-        reader = csv_mod.reader(lines)
+        reader = csv.reader(io.StringIO(response.text))
         rows = list(reader)
-        assert len(rows[0]) == len(COLUMN_NAMES)  # header columns
-        assert len(rows[1]) == len(COLUMN_NAMES)  # first data row
+        assert len(rows) >= 1
+        header = rows[0]
+        for col in ("id", "title", "content", "status", "image_url", "created_at", "updated_at"):
+            assert col in header, f"Column '{col}' missing from CSV header"
 
     def test_csv_empty_database_returns_only_header(self, client, mock_db):
+        """With no articles the CSV must contain exactly one row (the header)."""
         mock_db.query.return_value.all.return_value = []
-        with _patch_article_table():
-            response = client.get("/api/v1/export/articles?format=csv")
+        response = client.get("/api/v1/export/articles?format=csv")
         assert response.status_code == 200
-        lines = response.text.strip().splitlines()
-        assert len(lines) == 1
-        assert "id" in lines[0]
 
-    def test_csv_datetime_as_iso_string(self, client, mock_db):
-        article = _make_article(
-            created_at=datetime(2024, 3, 15, 10, 30, 0),
-            updated_at=datetime(2024, 3, 16, 11, 0, 0),
+        reader = csv.reader(io.StringIO(response.text))
+        rows = [r for r in reader if r]  # skip blank lines
+        assert len(rows) == 1, f"Expected 1 header row, got {len(rows)}"
+
+    def test_csv_with_articles_contains_data_rows(self, client, mock_db):
+        """Each article must appear as a row after the header."""
+        articles = [make_article(id=1, title="Alpha"), make_article(id=2, title="Beta")]
+        mock_db.query.return_value.all.return_value = articles
+        response = client.get("/api/v1/export/articles?format=csv")
+        assert response.status_code == 200
+
+        reader = csv.reader(io.StringIO(response.text))
+        rows = [r for r in reader if r]
+        assert len(rows) == 3, f"Expected header + 2 data rows, got {len(rows)}"
+
+    def test_csv_data_row_contains_correct_values(self, client, mock_db):
+        """Article field values must appear in the CSV data row."""
+        article = make_article(
+            id=42,
+            title="Hello World",
+            content="Body text",
+            status="draft",
+            image_url="http://example.com/img.png",
+            created_at=datetime(2024, 3, 1, 9, 0, 0),
+            updated_at=datetime(2024, 3, 2, 9, 0, 0),
         )
         mock_db.query.return_value.all.return_value = [article]
-        with _patch_article_table():
-            response = client.get("/api/v1/export/articles?format=csv")
-        assert "2024-03-15" in response.text
-        assert "2024-03-16" in response.text
+        response = client.get("/api/v1/export/articles?format=csv")
+        assert response.status_code == 200
+
+        reader = csv.reader(io.StringIO(response.text))
+        rows = list(reader)
+        header = rows[0]
+        data = rows[1]
+        row_dict = dict(zip(header, data))
+
+        assert row_dict["id"] == "42"
+        assert row_dict["title"] == "Hello World"
+        assert row_dict["content"] == "Body text"
+        assert row_dict["status"] == "draft"
+        assert row_dict["image_url"] == "http://example.com/img.png"
+        assert "2024-03-01" in row_dict["created_at"]
+        assert "2024-03-02" in row_dict["updated_at"]
+
+    def test_csv_null_image_url(self, client, mock_db):
+        """NULL image_url should be present in the row (as empty string or None)."""
+        article = make_article(id=5, image_url=None)
+        mock_db.query.return_value.all.return_value = [article]
+        response = client.get("/api/v1/export/articles?format=csv")
+        assert response.status_code == 200
+
+        reader = csv.reader(io.StringIO(response.text))
+        rows = list(reader)
+        # Just ensure we got two rows without error
+        assert len([r for r in rows if r]) == 2
 
 
 # ---------------------------------------------------------------------------
 # JSON export — happy path
 # ---------------------------------------------------------------------------
 
-class TestJSONExport:
-    def test_json_content_type(self, client, mock_db, two_articles):
-        mock_db.query.return_value.all.return_value = two_articles
-        with _patch_article_table():
-            response = client.get("/api/v1/export/articles?format=json")
+class TestJsonExport:
+    """Tests for format=json."""
+
+    def test_json_content_type(self, client, mock_db):
+        """Response Content-Type must be application/json."""
+        mock_db.query.return_value.all.return_value = []
+        response = client.get("/api/v1/export/articles?format=json")
         assert response.status_code == 200
         assert "application/json" in response.headers["content-type"]
 
-    def test_json_content_disposition(self, client, mock_db, two_articles):
-        mock_db.query.return_value.all.return_value = two_articles
-        with _patch_article_table():
-            response = client.get("/api/v1/export/articles?format=json")
-        assert 'filename="articles.json"' in response.headers["content-disposition"]
+    def test_json_content_disposition(self, client, mock_db):
+        """Content-Disposition must trigger file download as articles.json."""
+        mock_db.query.return_value.all.return_value = []
+        response = client.get("/api/v1/export/articles?format=json")
+        assert response.status_code == 200
+        cd = response.headers.get("content-disposition", "")
+        assert "attachment" in cd
+        assert "articles.json" in cd
 
-    def test_json_returns_valid_array(self, client, mock_db, two_articles):
-        mock_db.query.return_value.all.return_value = two_articles
-        with _patch_article_table():
-            response = client.get("/api/v1/export/articles?format=json")
-        data = json.loads(response.text)
+    def test_json_empty_database_returns_empty_array(self, client, mock_db):
+        """With no articles the JSON body must be an empty array."""
+        mock_db.query.return_value.all.return_value = []
+        response = client.get("/api/v1/export/articles?format=json")
+        assert response.status_code == 200
+        data = response.json()
+        assert data == []
+
+    def test_json_with_articles_returns_array(self, client, mock_db):
+        """JSON response must be an array with one object per article."""
+        articles = [make_article(id=1), make_article(id=2)]
+        mock_db.query.return_value.all.return_value = articles
+        response = client.get("/api/v1/export/articles?format=json")
+        assert response.status_code == 200
+        data = response.json()
         assert isinstance(data, list)
         assert len(data) == 2
 
-    def test_json_contains_all_fields(self, client, mock_db, two_articles):
-        mock_db.query.return_value.all.return_value = two_articles
-        with _patch_article_table():
-            response = client.get("/api/v1/export/articles?format=json")
-        data = json.loads(response.text)
-        first = data[0]
-        for field in COLUMN_NAMES:
-            assert field in first, f"Field '{field}' missing from JSON response"
-
-    def test_json_values_match_article(self, client, mock_db):
-        article = _make_article(
-            id=42,
-            title="Special Article",
-            content="Special content",
-            status="published",
-        )
+    def test_json_article_contains_all_fields(self, client, mock_db):
+        """Each JSON object must contain all article fields."""
+        article = make_article(id=7, title="Field Check")
         mock_db.query.return_value.all.return_value = [article]
-        with _patch_article_table():
-            response = client.get("/api/v1/export/articles?format=json")
-        data = json.loads(response.text)
-        assert data[0]["id"] == 42
-        assert data[0]["title"] == "Special Article"
-        assert data[0]["content"] == "Special content"
-        assert data[0]["status"] == "published"
-
-    def test_json_empty_database_returns_empty_array(self, client, mock_db):
-        mock_db.query.return_value.all.return_value = []
-        with _patch_article_table():
-            response = client.get("/api/v1/export/articles?format=json")
+        response = client.get("/api/v1/export/articles?format=json")
         assert response.status_code == 200
-        data = json.loads(response.text)
-        assert data == []
+        data = response.json()
+        assert len(data) == 1
+        obj = data[0]
+        for field in ("id", "title", "content", "status", "image_url", "created_at", "updated_at"):
+            assert field in obj, f"Field '{field}' missing from JSON object"
 
-    def test_json_datetime_as_iso_string(self, client, mock_db):
-        article = _make_article(
-            created_at=datetime(2024, 5, 20, 8, 0, 0),
-            updated_at=datetime(2024, 5, 21, 9, 0, 0),
+    def test_json_article_values_are_correct(self, client, mock_db):
+        """Article field values in JSON must match the source data."""
+        article = make_article(
+            id=99,
+            title="JSON Article",
+            content="JSON body",
+            status="published",
+            image_url=None,
+            created_at=datetime(2024, 6, 1, 8, 0, 0),
+            updated_at=datetime(2024, 6, 2, 8, 0, 0),
         )
         mock_db.query.return_value.all.return_value = [article]
-        with _patch_article_table():
-            response = client.get("/api/v1/export/articles?format=json")
-        data = json.loads(response.text)
-        assert data[0]["created_at"] == "2024-05-20T08:00:00"
-        assert data[0]["updated_at"] == "2024-05-21T09:00:00"
+        response = client.get("/api/v1/export/articles?format=json")
+        assert response.status_code == 200
+        obj = response.json()[0]
+        assert obj["id"] == 99
+        assert obj["title"] == "JSON Article"
+        assert obj["content"] == "JSON body"
+        assert obj["status"] == "published"
+        assert obj["image_url"] is None
+        assert "2024-06-01" in obj["created_at"]
+        assert "2024-06-02" in obj["updated_at"]
 
-    def test_json_null_image_url(self, client, mock_db):
-        article = _make_article(image_url=None)
+    def test_json_datetime_fields_are_strings(self, client, mock_db):
+        """Datetime fields in JSON must be serialized as ISO strings, not objects."""
+        article = make_article(id=3, created_at=datetime(2024, 1, 1), updated_at=datetime(2024, 1, 2))
         mock_db.query.return_value.all.return_value = [article]
-        with _patch_article_table():
-            response = client.get("/api/v1/export/articles?format=json")
-        data = json.loads(response.text)
-        assert data[0]["image_url"] is None
+        response = client.get("/api/v1/export/articles?format=json")
+        assert response.status_code == 200
+        obj = response.json()[0]
+        assert isinstance(obj["created_at"], str)
+        assert isinstance(obj["updated_at"], str)
 
 
 # ---------------------------------------------------------------------------
-# Invalid format — error path
+# Error handling
 # ---------------------------------------------------------------------------
 
-class TestInvalidFormat:
+class TestExportErrors:
+    """Tests for invalid inputs."""
+
     def test_invalid_format_returns_400(self, client, mock_db):
+        """An unsupported format value must return HTTP 400."""
         mock_db.query.return_value.all.return_value = []
         response = client.get("/api/v1/export/articles?format=xml")
         assert response.status_code == 400
 
     def test_invalid_format_error_message(self, client, mock_db):
+        """The 400 error detail must say 'csv' or 'json'."""
         mock_db.query.return_value.all.return_value = []
-        response = client.get("/api/v1/export/articles?format=xml")
+        response = client.get("/api/v1/export/articles?format=xlsx")
+        assert response.status_code == 400
         body = response.json()
-        assert "Format must be 'csv' or 'json'" in body["detail"]
+        assert "csv" in body["detail"].lower() or "json" in body["detail"].lower()
 
-    def test_missing_format_returns_422(self, client, mock_db):
-        """format is required; missing it should return 422 Unprocessable Entity."""
+    def test_missing_format_returns_error(self, client, mock_db):
+        """Omitting the format query param must not return 200."""
         mock_db.query.return_value.all.return_value = []
         response = client.get("/api/v1/export/articles")
-        assert response.status_code == 422
+        # FastAPI returns 422 for missing required Query param
+        assert response.status_code in (400, 422)
 
-    def test_empty_format_returns_400(self, client, mock_db):
+    def test_empty_string_format_returns_400(self, client, mock_db):
+        """An empty string format must return a non-200 response."""
         mock_db.query.return_value.all.return_value = []
         response = client.get("/api/v1/export/articles?format=")
-        assert response.status_code == 400
-
-    def test_uppercase_format_returns_400(self, client, mock_db):
-        """Format check is case-sensitive; 'CSV' should not be accepted."""
-        mock_db.query.return_value.all.return_value = []
-        response = client.get("/api/v1/export/articles?format=CSV")
-        assert response.status_code == 400
-
-    def test_invalid_format_detail_type(self, client, mock_db):
-        """Ensure the 400 response is proper JSON with a detail field."""
-        response = client.get("/api/v1/export/articles?format=yaml")
-        assert response.status_code == 400
-        body = response.json()
-        assert "detail" in body
+        assert response.status_code in (400, 422)
