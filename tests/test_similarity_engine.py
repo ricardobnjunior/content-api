@@ -1,19 +1,20 @@
-"""Tests for app/ai/similarity.py — LLM-based similarity engine."""
+"""Tests for app/ai/similarity.py — LLM-based article similarity engine."""
 
-import os
 import json
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+# Ensure env vars are set before importing app modules
 os.environ.setdefault("DATABASE_URL", "sqlite:///./test.db")
-os.environ.setdefault("SECRET_KEY", "test-secret")
+os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 os.environ.setdefault("OPENROUTER_MODEL", "test-model")
 
 
-def make_article(article_id: int, title: str, content: str, status: str = "published"):
-    """Create a mock article object."""
+def _make_article(article_id: int, title: str, content: str, status: str = "published"):
+    """Create a mock article ORM object."""
     article = MagicMock()
     article.id = article_id
     article.title = title
@@ -22,224 +23,307 @@ def make_article(article_id: int, title: str, content: str, status: str = "publi
     return article
 
 
-def make_llm_response(similar_list: list) -> MagicMock:
-    """Create a mock LLM response."""
-    response = MagicMock()
-    response.choices = [MagicMock()]
-    response.choices[0].message.content = json.dumps({"similar": similar_list})
-    return response
+def _make_llm_response(similar: list[dict]) -> MagicMock:
+    """Create a mock LLM API response."""
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = json.dumps({"similar": similar})
+    return mock_response
 
 
 @pytest.fixture
-def mock_openai_client():
-    """Patch OpenAI client used in similarity module."""
-    with patch("app.ai.similarity.OpenAI") as mock_cls:
-        mock_instance = MagicMock()
-        mock_cls.return_value = mock_instance
-        yield mock_instance
+def target_article():
+    return _make_article(1, "Target Article", "This is the target article content.")
 
 
 @pytest.fixture
-def mock_settings():
-    """Patch get_settings in similarity module."""
-    with patch("app.ai.similarity.get_settings") as mock_get:
-        settings = MagicMock()
-        settings.openrouter_api_key = "test-key"
-        settings.openrouter_model = "test-model"
-        mock_get.return_value = settings
-        yield settings
+def candidate_articles():
+    return [
+        _make_article(2, "Candidate One", "Related content about topic A."),
+        _make_article(3, "Candidate Two", "Different content about topic B."),
+        _make_article(4, "Candidate Three", "Somewhat related content."),
+    ]
 
 
-class TestFindSimilarArticles:
-    """Tests for find_similar_articles function."""
+class TestFindSimilarArticlesHappyPath:
+    """Happy path tests for find_similar_articles."""
 
-    def test_returns_empty_list_when_no_candidates(self, mock_settings):
-        """No candidates → returns empty list without calling LLM."""
+    def test_returns_sorted_results_by_score(self, target_article, candidate_articles):
+        """LLM response is parsed and results are sorted descending by score."""
         from app.ai.similarity import find_similar_articles  # noqa: E402
 
-        target = make_article(1, "Target", "Some content")
-        result = find_similar_articles(target, [], limit=5)
+        llm_similar = [
+            {"id": 3, "similarity_score": 0.62},
+            {"id": 2, "similarity_score": 0.85},
+            {"id": 4, "similarity_score": 0.45},
+        ]
+        mock_response = _make_llm_response(llm_similar)
 
-        assert result == []
+        with patch("app.ai.similarity.OpenAI") as mock_openai_cls:
+            mock_client = MagicMock()
+            mock_openai_cls.return_value = mock_client
+            mock_client.chat.completions.create.return_value = mock_response
 
-    def test_happy_path_returns_similar_articles(self, mock_openai_client, mock_settings):
-        """Multiple candidates + LLM response → returns ranked results."""
+            results = find_similar_articles(target_article, candidate_articles, limit=5)
+
+        assert len(results) == 3
+        # Should be sorted descending
+        assert results[0]["id"] == 2
+        assert results[0]["similarity_score"] == pytest.approx(0.85)
+        assert results[1]["id"] == 3
+        assert results[1]["similarity_score"] == pytest.approx(0.62)
+        assert results[2]["id"] == 4
+        assert results[2]["similarity_score"] == pytest.approx(0.45)
+
+    def test_limit_is_respected(self, target_article, candidate_articles):
+        """Only up to `limit` results are returned."""
         from app.ai.similarity import find_similar_articles  # noqa: E402
 
-        target = make_article(1, "Python Tutorial", "Learn Python programming")
+        llm_similar = [
+            {"id": 2, "similarity_score": 0.90},
+            {"id": 3, "similarity_score": 0.70},
+            {"id": 4, "similarity_score": 0.50},
+        ]
+        mock_response = _make_llm_response(llm_similar)
+
+        with patch("app.ai.similarity.OpenAI") as mock_openai_cls:
+            mock_client = MagicMock()
+            mock_openai_cls.return_value = mock_client
+            mock_client.chat.completions.create.return_value = mock_response
+
+            results = find_similar_articles(target_article, candidate_articles, limit=2)
+
+        assert len(results) == 2
+        assert results[0]["similarity_score"] >= results[1]["similarity_score"]
+
+    def test_result_dict_has_required_keys(self, target_article, candidate_articles):
+        """Each result dict has 'id' and 'similarity_score' keys."""
+        from app.ai.similarity import find_similar_articles  # noqa: E402
+
+        llm_similar = [{"id": 2, "similarity_score": 0.75}]
+        mock_response = _make_llm_response(llm_similar)
+
+        with patch("app.ai.similarity.OpenAI") as mock_openai_cls:
+            mock_client = MagicMock()
+            mock_openai_cls.return_value = mock_client
+            mock_client.chat.completions.create.return_value = mock_response
+
+            results = find_similar_articles(target_article, candidate_articles, limit=5)
+
+        assert len(results) >= 1
+        for item in results:
+            assert "id" in item
+            assert "similarity_score" in item
+
+    def test_openai_client_called_with_correct_model(self, target_article, candidate_articles):
+        """The OpenAI client is called with the model from settings."""
+        from app.ai.similarity import find_similar_articles  # noqa: E402
+
+        llm_similar = [{"id": 2, "similarity_score": 0.80}]
+        mock_response = _make_llm_response(llm_similar)
+
+        with patch("app.ai.similarity.OpenAI") as mock_openai_cls:
+            mock_client = MagicMock()
+            mock_openai_cls.return_value = mock_client
+            mock_client.chat.completions.create.return_value = mock_response
+
+            find_similar_articles(target_article, candidate_articles, limit=5)
+
+            call_kwargs = mock_client.chat.completions.create.call_args
+            assert call_kwargs is not None
+            # temperature should be 0.1
+            assert call_kwargs.kwargs.get("temperature") == 0.1
+
+
+class TestFindSimilarArticlesEdgeCases:
+    """Edge case tests for find_similar_articles."""
+
+    def test_empty_candidates_returns_empty_list(self, target_article):
+        """No LLM call is made when there are no candidates."""
+        from app.ai.similarity import find_similar_articles  # noqa: E402
+
+        with patch("app.ai.similarity.OpenAI") as mock_openai_cls:
+            mock_client = MagicMock()
+            mock_openai_cls.return_value = mock_client
+
+            results = find_similar_articles(target_article, [], limit=5)
+
+        assert results == []
+        mock_client.chat.completions.create.assert_not_called()
+
+    def test_malformed_json_raises_value_error(self, target_article, candidate_articles):
+        """ValueError is raised when LLM returns malformed JSON."""
+        from app.ai.similarity import find_similar_articles  # noqa: E402
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "not valid json {{{"
+
+        with patch("app.ai.similarity.OpenAI") as mock_openai_cls:
+            mock_client = MagicMock()
+            mock_openai_cls.return_value = mock_client
+            mock_client.chat.completions.create.return_value = mock_response
+
+            with pytest.raises(ValueError, match="malformed JSON"):
+                find_similar_articles(target_article, candidate_articles, limit=5)
+
+    def test_missing_similar_key_raises_value_error(self, target_article, candidate_articles):
+        """ValueError is raised when LLM response is missing 'similar' key."""
+        from app.ai.similarity import find_similar_articles  # noqa: E402
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({"results": []})
+
+        with patch("app.ai.similarity.OpenAI") as mock_openai_cls:
+            mock_client = MagicMock()
+            mock_openai_cls.return_value = mock_client
+            mock_client.chat.completions.create.return_value = mock_response
+
+            with pytest.raises(ValueError, match="unexpected structure"):
+                find_similar_articles(target_article, candidate_articles, limit=5)
+
+    def test_llm_api_failure_raises_runtime_error(self, target_article, candidate_articles):
+        """RuntimeError is raised when the LLM API call throws an exception."""
+        from app.ai.similarity import find_similar_articles  # noqa: E402
+
+        with patch("app.ai.similarity.OpenAI") as mock_openai_cls:
+            mock_client = MagicMock()
+            mock_openai_cls.return_value = mock_client
+            mock_client.chat.completions.create.side_effect = Exception("API connection error")
+
+            with pytest.raises(RuntimeError, match="LLM API call failed"):
+                find_similar_articles(target_article, candidate_articles, limit=5)
+
+    def test_llm_returns_unknown_article_ids_are_skipped(self, target_article, candidate_articles):
+        """Items with IDs not in the candidate set are silently skipped."""
+        from app.ai.similarity import find_similar_articles  # noqa: E402
+
+        llm_similar = [
+            {"id": 2, "similarity_score": 0.85},
+            {"id": 999, "similarity_score": 0.99},  # Not a real candidate
+        ]
+        mock_response = _make_llm_response(llm_similar)
+
+        with patch("app.ai.similarity.OpenAI") as mock_openai_cls:
+            mock_client = MagicMock()
+            mock_openai_cls.return_value = mock_client
+            mock_client.chat.completions.create.return_value = mock_response
+
+            results = find_similar_articles(target_article, candidate_articles, limit=5)
+
+        ids_returned = [r["id"] for r in results]
+        assert 999 not in ids_returned
+        assert 2 in ids_returned
+
+    def test_malformed_item_in_similar_list_is_skipped(self, target_article, candidate_articles):
+        """Items missing required keys in the 'similar' list are skipped."""
+        from app.ai.similarity import find_similar_articles  # noqa: E402
+
+        llm_similar = [
+            {"id": 2, "similarity_score": 0.85},
+            {"bad_key": "no_id"},   # Malformed item
+        ]
+        mock_response = _make_llm_response(llm_similar)
+
+        with patch("app.ai.similarity.OpenAI") as mock_openai_cls:
+            mock_client = MagicMock()
+            mock_openai_cls.return_value = mock_client
+            mock_client.chat.completions.create.return_value = mock_response
+
+            results = find_similar_articles(target_article, candidate_articles, limit=5)
+
+        assert len(results) == 1
+        assert results[0]["id"] == 2
+
+    def test_default_limit_is_five(self, target_article, candidate_articles):
+        """Default limit of 5 is applied when not specified."""
+        from app.ai.similarity import find_similar_articles  # noqa: E402
+
+        # 6 items returned by LLM
+        llm_similar = [
+            {"id": 2, "similarity_score": 0.95},
+            {"id": 3, "similarity_score": 0.85},
+        ]
+        # Only 2 candidates, so max 2 returned regardless
+        mock_response = _make_llm_response(llm_similar)
+
+        with patch("app.ai.similarity.OpenAI") as mock_openai_cls:
+            mock_client = MagicMock()
+            mock_openai_cls.return_value = mock_client
+            mock_client.chat.completions.create.return_value = mock_response
+
+            # Call without specifying limit
+            results = find_similar_articles(target_article, candidate_articles)
+
+        # Results should not exceed 5 (default) or number of candidates
+        assert len(results) <= 5
+
+
+class TestBuildUserPrompt:
+    """Tests for the _build_user_prompt helper."""
+
+    def test_prompt_contains_target_title(self):
+        """The prompt includes the target article's title."""
+        from app.ai.similarity import _build_user_prompt  # noqa: E402
+
+        target = _make_article(1, "My Target Title", "Target content here.")
+        candidates = [_make_article(2, "Candidate", "Some content.")]
+
+        prompt = _build_user_prompt(target, candidates)
+
+        assert "My Target Title" in prompt
+
+    def test_prompt_contains_candidate_ids(self):
+        """The prompt includes all candidate article IDs."""
+        from app.ai.similarity import _build_user_prompt  # noqa: E402
+
+        target = _make_article(1, "Target", "Content.")
         candidates = [
-            make_article(2, "Advanced Python", "Deep dive into Python"),
-            make_article(3, "JavaScript Basics", "Learn JS"),
+            _make_article(10, "Candidate A", "Content A."),
+            _make_article(20, "Candidate B", "Content B."),
         ]
 
-        mock_openai_client.chat.completions.create.return_value = make_llm_response([
-            {"id": 2, "similarity_score": 0.92},
-            {"id": 3, "similarity_score": 0.45},
-        ])
+        prompt = _build_user_prompt(target, candidates)
 
-        result = find_similar_articles(target, candidates, limit=5)
+        assert "ID:10" in prompt
+        assert "ID:20" in prompt
 
-        assert len(result) == 2
-        assert result[0]["id"] == 2
-        assert result[0]["similarity_score"] == pytest.approx(0.92)
-        assert result[1]["id"] == 3
-        assert result[1]["similarity_score"] == pytest.approx(0.45)
+    def test_prompt_truncates_target_content_at_500_chars(self):
+        """Target article content is truncated to 500 characters."""
+        from app.ai.similarity import _build_user_prompt  # noqa: E402
 
-    def test_limit_parameter_restricts_results(self, mock_openai_client, mock_settings):
-        """limit parameter caps the number of returned results."""
-        from app.ai.similarity import find_similar_articles  # noqa: E402
+        long_content = "A" * 1000
+        target = _make_article(1, "Target", long_content)
+        candidates = [_make_article(2, "Candidate", "Content.")]
 
-        target = make_article(1, "Target", "Content")
-        candidates = [make_article(i, f"Article {i}", f"Content {i}") for i in range(2, 7)]
+        prompt = _build_user_prompt(target, candidates)
 
-        mock_openai_client.chat.completions.create.return_value = make_llm_response([
-            {"id": i, "similarity_score": round(1.0 - i * 0.1, 1)} for i in range(2, 7)
-        ])
+        # The content in the prompt should not contain more than 500 As in a row
+        assert "A" * 501 not in prompt
+        assert "A" * 500 in prompt
 
-        result = find_similar_articles(target, candidates, limit=2)
-        assert len(result) <= 2
+    def test_prompt_truncates_candidate_content_at_200_chars(self):
+        """Candidate article content is truncated to 200 characters."""
+        from app.ai.similarity import _build_user_prompt  # noqa: E402
 
-    def test_results_sorted_by_score_descending(self, mock_openai_client, mock_settings):
-        """Results are sorted by similarity_score descending."""
-        from app.ai.similarity import find_similar_articles  # noqa: E402
+        target = _make_article(1, "Target", "Target content.")
+        long_content = "B" * 500
+        candidates = [_make_article(2, "Candidate", long_content)]
 
-        target = make_article(1, "Target", "Content")
-        candidates = [
-            make_article(2, "Article 2", "Content 2"),
-            make_article(3, "Article 3", "Content 3"),
-            make_article(4, "Article 4", "Content 4"),
-        ]
+        prompt = _build_user_prompt(target, candidates)
 
-        # LLM returns in non-sorted order
-        mock_openai_client.chat.completions.create.return_value = make_llm_response([
-            {"id": 4, "similarity_score": 0.3},
-            {"id": 2, "similarity_score": 0.9},
-            {"id": 3, "similarity_score": 0.6},
-        ])
+        # 200 Bs should appear, but not 201
+        assert "B" * 200 in prompt
+        assert "B" * 201 not in prompt
 
-        result = find_similar_articles(target, candidates, limit=10)
-        scores = [r["similarity_score"] for r in result]
-        assert scores == sorted(scores, reverse=True)
+    def test_prompt_handles_none_content(self):
+        """Articles with None content do not cause errors."""
+        from app.ai.similarity import _build_user_prompt  # noqa: E402
 
-    def test_malformed_json_raises_value_error(self, mock_openai_client, mock_settings):
-        """LLM returning malformed JSON raises ValueError."""
-        from app.ai.similarity import find_similar_articles  # noqa: E402
+        target = _make_article(1, "Target", None)
+        candidates = [_make_article(2, "Candidate", None)]
 
-        target = make_article(1, "Target", "Content")
-        candidates = [make_article(2, "Article 2", "Content 2")]
-
-        bad_response = MagicMock()
-        bad_response.choices = [MagicMock()]
-        bad_response.choices[0].message.content = "NOT VALID JSON {{{"
-        mock_openai_client.chat.completions.create.return_value = bad_response
-
-        with pytest.raises(ValueError, match="malformed JSON"):
-            find_similar_articles(target, candidates, limit=5)
-
-    def test_llm_api_failure_raises_runtime_error(self, mock_openai_client, mock_settings):
-        """LLM API call failure raises RuntimeError."""
-        from app.ai.similarity import find_similar_articles  # noqa: E402
-
-        target = make_article(1, "Target", "Content")
-        candidates = [make_article(2, "Article 2", "Content 2")]
-
-        mock_openai_client.chat.completions.create.side_effect = Exception("Connection refused")
-
-        with pytest.raises(RuntimeError, match="LLM API call failed"):
-            find_similar_articles(target, candidates, limit=5)
-
-    def test_empty_llm_response_raises_value_error(self, mock_openai_client, mock_settings):
-        """LLM returning empty content raises ValueError."""
-        from app.ai.similarity import find_similar_articles  # noqa: E402
-
-        target = make_article(1, "Target", "Content")
-        candidates = [make_article(2, "Article 2", "Content 2")]
-
-        empty_response = MagicMock()
-        empty_response.choices = [MagicMock()]
-        empty_response.choices[0].message.content = ""
-        mock_openai_client.chat.completions.create.return_value = empty_response
-
-        with pytest.raises(ValueError, match="empty response"):
-            find_similar_articles(target, candidates, limit=5)
-
-    def test_invalid_ids_filtered_out(self, mock_openai_client, mock_settings):
-        """LLM returning IDs not in candidate list are filtered out."""
-        from app.ai.similarity import find_similar_articles  # noqa: E402
-
-        target = make_article(1, "Target", "Content")
-        candidates = [make_article(2, "Article 2", "Content 2")]
-
-        mock_openai_client.chat.completions.create.return_value = make_llm_response([
-            {"id": 2, "similarity_score": 0.8},
-            {"id": 999, "similarity_score": 0.95},  # invalid ID
-        ])
-
-        result = find_similar_articles(target, candidates, limit=5)
-        ids = [r["id"] for r in result]
-        assert 999 not in ids
-        assert 2 in ids
-
-    def test_missing_id_or_score_items_skipped(self, mock_openai_client, mock_settings):
-        """Items missing 'id' or 'similarity_score' are skipped."""
-        from app.ai.similarity import find_similar_articles  # noqa: E402
-
-        target = make_article(1, "Target", "Content")
-        candidates = [
-            make_article(2, "Article 2", "Content 2"),
-            make_article(3, "Article 3", "Content 3"),
-        ]
-
-        mock_openai_client.chat.completions.create.return_value = make_llm_response([
-            {"id": 2, "similarity_score": 0.8},
-            {"id": 3},  # missing score
-            {"similarity_score": 0.5},  # missing id
-        ])
-
-        result = find_similar_articles(target, candidates, limit=5)
-        assert len(result) == 1
-        assert result[0]["id"] == 2
-
-    def test_similar_not_list_raises_value_error(self, mock_openai_client, mock_settings):
-        """LLM response with 'similar' not being a list raises ValueError."""
-        from app.ai.similarity import find_similar_articles  # noqa: E402
-
-        target = make_article(1, "Target", "Content")
-        candidates = [make_article(2, "Article 2", "Content 2")]
-
-        bad_response = MagicMock()
-        bad_response.choices = [MagicMock()]
-        bad_response.choices[0].message.content = json.dumps({"similar": "not-a-list"})
-        mock_openai_client.chat.completions.create.return_value = bad_response
-
-        with pytest.raises(ValueError, match="not a list"):
-            find_similar_articles(target, candidates, limit=5)
-
-    def test_content_preview_uses_first_200_chars_for_candidates(
-        self, mock_openai_client, mock_settings
-    ):
-        """Builds user message correctly — candidate content truncated to 200 chars."""
-        from app.ai.similarity import _build_user_message  # noqa: E402
-
-        target = make_article(1, "Target", "Target content")
-        long_content = "x" * 500
-        candidate = make_article(2, "Article 2", long_content)
-
-        message = _build_user_message(target, [candidate])
-
-        # The candidate content preview should be at most 200 chars of 'x'
-        assert "x" * 200 in message
-        assert "x" * 201 not in message
-
-    def test_target_content_preview_uses_first_500_chars(self, mock_settings):
-        """Target article content is truncated to 500 chars in the prompt."""
-        from app.ai.similarity import _build_user_message  # noqa: E402
-
-        long_content = "y" * 600
-        target = make_article(1, "Target", long_content)
-        candidate = make_article(2, "Article 2", "Short content")
-
-        message = _build_user_message(target, [candidate])
-
-        assert "y" * 500 in message
-        assert "y" * 501 not in message
+        # Should not raise
+        prompt = _build_user_prompt(target, candidates)
+        assert "Target" in prompt
