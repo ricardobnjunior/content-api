@@ -1,52 +1,67 @@
-"""Pydantic schemas for Article."""
+"""Pydantic schemas for article API."""
 
-from datetime import datetime
+import math
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
-from app.schemas.category import CategoryResponse
+from app.models.article import ArticleStatus
+
+
+class CategoryResponse(BaseModel):
+    """Schema for category in article response."""
+
+    id: int
+    name: str
+    slug: str
+
+    model_config = {"from_attributes": True}
 
 
 class ArticleCreate(BaseModel):
-    """Schema for creating a new article."""
+    """Schema for creating an article."""
 
     title: str
     body: str
+    status: ArticleStatus = ArticleStatus.draft
     author: str
-    status: Optional[str] = "draft"
     category_ids: list[int] = []
 
 
 class ArticleUpdate(BaseModel):
-    """Schema for updating an existing article."""
+    """Schema for updating an article."""
 
     title: Optional[str] = None
     body: Optional[str] = None
+    status: Optional[ArticleStatus] = None
     author: Optional[str] = None
-    status: Optional[str] = None
-    category_ids: list[int] = []
+    category_ids: Optional[list[int]] = None
 
 
 class ArticleResponse(BaseModel):
-    """Schema for article responses."""
-
-    model_config = ConfigDict(from_attributes=True)
+    """Schema for article API response."""
 
     id: int
     title: str
     body: str
+    status: ArticleStatus
     author: str
-    status: str
-    created_at: datetime
-    updated_at: datetime
     categories: list[CategoryResponse] = []
+
+    model_config = {"from_attributes": True}
+
+
+class PaginationMeta(BaseModel):
+    """Pagination metadata for list responses."""
+
+    total: int
+    page: int
+    per_page: int
+    pages: int
 
 
 class ArticleList(BaseModel):
-    """Schema for a list of articles."""
-
-    model_config = ConfigDict(from_attributes=True)
+    """Schema for paginated list of articles."""
 
     items: list[ArticleResponse]
-    total: int
+    meta: PaginationMeta

@@ -1,102 +1,145 @@
-"""CRUD operations for Article."""
+"""CRUD operations for articles."""
 
+from typing import Optional
+
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from app.models.article import Article, ArticleStatus
-from app.models.category import Category
+from app.models.article import Article, ArticleStatus, article_categories
 from app.schemas.article import ArticleCreate, ArticleUpdate
 
 
-def create_article(db: Session, data: ArticleCreate) -> Article:
-    """Create a new article, optionally assigning categories.
+def create_article(db: Session, article_in: ArticleCreate) -> Article:
+    """Create a new article.
 
     Args:
-        db: SQLAlchemy database session.
-        data: Article creation data including optional category_ids.
+        db: Database session.
+        article_in: Article creation schema.
 
     Returns:
-        The newly created Article instance.
+        The created Article ORM object.
     """
-    article = Article(
-        title=data.title,
-        body=data.body,
-        author=data.author,
-        status=ArticleStatus(data.status) if data.status else ArticleStatus.draft,
-    )
-    db.add(article)
-    db.flush()  # get article.id without committing
+    from app.models.category import Category
 
-    if data.category_ids:
+    article = Article(
+        title=article_in.title,
+        body=article_in.body,
+        status=article_in.status,
+        author=article_in.author,
+    )
+    if article_in.category_ids:
         categories = db.query(Category).filter(
-            Category.id.in_(data.category_ids)
+            Category.id.in_(article_in.category_ids)
         ).all()
         article.categories = categories
 
+    db.add(article)
     db.commit()
     db.refresh(article)
     return article
 
 
-def get_article(db: Session, article_id: int) -> Article | None:
-    """Retrieve an article by its ID.
+def get_article(db: Session, article_id: int) -> Optional[Article]:
+    """Get a single article by ID.
 
     Args:
-        db: SQLAlchemy database session.
+        db: Database session.
         article_id: The ID of the article to retrieve.
 
     Returns:
-        The Article instance if found, else None.
+        The Article ORM object, or None if not found.
     """
     return db.query(Article).filter(Article.id == article_id).first()
 
 
 def get_articles(
-    db: Session, skip: int = 0, limit: int = 20
+    db: Session,
+    page: int = 1,
+    per_page: int = 20,
+    search: Optional[str] = None,
+    status: Optional[ArticleStatus] = None,
+    author: Optional[str] = None,
+    category_id: Optional[int] = None,
 ) -> tuple[list[Article], int]:
-    """Retrieve a paginated list of articles.
+    """Get a paginated, filtered list of articles.
 
     Args:
-        db: SQLAlchemy database session.
-        skip: Number of records to skip.
-        limit: Maximum number of records to return.
+        db: Database session.
+        page: Page number (1-indexed).
+        per_page: Number of items per page.
+        search: Optional search string matched against title and body (case-insensitive).
+        status: Optional status filter (exact match).
+        author: Optional author filter (exact match).
+        category_id: Optional category ID filter; returns articles belonging to this category.
 
     Returns:
-        A tuple of (list of Article instances, total count).
+        A tuple of (list of Article objects, total count before pagination).
     """
-    total = db.query(Article).count()
-    articles = db.query(Article).offset(skip).limit(limit).all()
+    query = db.query(Article)
+
+    # Apply search filter (case-insensitive match on title OR body)
+    if search is not None:
+        search_pattern = f"%{search}%"
+        query = query.filter(
+            or_(
+                Article.title.ilike(search_pattern),
+                Article.body.ilike(search_pattern),
+            )
+        )
+
+    # Apply status filter
+    if status is not None:
+        query = query.filter(Article.status == status)
+
+    # Apply author filter
+    if author is not None:
+        query = query.filter(Article.author == author)
+
+    # Apply category filter via join through article_categories table
+    if category_id is not None:
+        query = query.join(
+            article_categories,
+            Article.id == article_categories.c.article_id,
+        ).filter(article_categories.c.category_id == category_id)
+
+    # Count total before pagination
+    total = query.with_entities(func.count(Article.id)).scalar()
+
+    # Apply pagination
+    offset = (page - 1) * per_page
+    articles = query.offset(offset).limit(per_page).all()
+
     return articles, total
 
 
 def update_article(
-    db: Session, article_id: int, data: ArticleUpdate
-) -> Article | None:
+    db: Session, article_id: int, article_in: ArticleUpdate
+) -> Optional[Article]:
     """Update an existing article.
 
     Args:
-        db: SQLAlchemy database session.
+        db: Database session.
         article_id: The ID of the article to update.
-        data: Article update data including optional category_ids.
+        article_in: Article update schema with fields to change.
 
     Returns:
-        The updated Article instance if found, else None.
+        The updated Article ORM object, or None if not found.
     """
-    article = db.query(Article).filter(Article.id == article_id).first()
+    from app.models.category import Category
+
+    article = get_article(db, article_id)
     if article is None:
         return None
 
-    if data.title is not None:
-        article.title = data.title
-    if data.body is not None:
-        article.body = data.body
-    if data.author is not None:
-        article.author = data.author
-    if data.status is not None:
-        article.status = ArticleStatus(data.status)
+    update_data = article_in.model_dump(exclude_unset=True)
+    category_ids = update_data.pop("category_ids", None)
 
-    if data.category_ids is not None:
+    for field, value in update_data.items():
+        setattr(article, field, value)
+
+    if category_ids is not None:
         categories = db.query(Category).filter(
-            Category.id.in_(data.category_ids)
+            Category.id.in_(category_ids)
         ).all()
         article.categories = categories
 
@@ -105,19 +148,19 @@ def update_article(
     return article
 
 
-def delete_article(db: Session, article_id: int) -> bool:
-    """Delete an article by its ID.
+def delete_article(db: Session, article_id: int) -> Optional[Article]:
+    """Delete an article by ID.
 
     Args:
-        db: SQLAlchemy database session.
+        db: Database session.
         article_id: The ID of the article to delete.
 
     Returns:
-        True if the article was deleted, False if not found.
+        The deleted Article ORM object, or None if not found.
     """
-    article = db.query(Article).filter(Article.id == article_id).first()
+    article = get_article(db, article_id)
     if article is None:
-        return False
+        return None
     db.delete(article)
     db.commit()
-    return True
+    return article
