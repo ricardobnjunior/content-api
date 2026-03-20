@@ -1,39 +1,66 @@
-"""Root conftest.py — provides TestClient and db_session fixtures."""
+"""Shared test fixtures for the articles API test suite."""
+
+import os
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.config import get_settings
 from app.database import Base, get_db
 from app.main import app
 
-# Use an in-memory SQLite database for tests
-TEST_DATABASE_URL = "sqlite:///./test_articles.db"
+TEST_DATABASE_URL = "sqlite:///./test.db"
+
+test_engine = create_engine(
+    TEST_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+)
+
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="session", autouse=True)
+def setup_database():
+    """Create all tables before the test session and drop them after.
+
+    Yields:
+        None
+    """
+    Base.metadata.create_all(bind=test_engine)
+    yield
+    Base.metadata.drop_all(bind=test_engine)
+
+
+@pytest.fixture
 def db_session():
-    """Create a fresh database session for each test function."""
-    engine = create_engine(
-        TEST_DATABASE_URL,
-        connect_args={"check_same_thread": False},
-    )
-    Base.metadata.create_all(bind=engine)
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    """Provide a transactional database session that rolls back after each test.
 
-    session = TestingSessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
-        Base.metadata.drop_all(bind=engine)
-        engine.dispose()
+    Yields:
+        SQLAlchemy Session instance.
+    """
+    connection = test_engine.connect()
+    transaction = connection.begin()
+    session = TestingSessionLocal(bind=connection)
+
+    yield session
+
+    session.close()
+    transaction.rollback()
+    connection.close()
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def client(db_session):
-    """Provide a TestClient with the test database session injected."""
+    """Provide a test HTTP client with overridden database dependency.
+
+    Args:
+        db_session: Transactional test database session.
+
+    Yields:
+        FastAPI TestClient instance.
+    """
 
     def override_get_db():
         try:
@@ -45,3 +72,21 @@ def client(db_session):
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def override_upload_dir(tmp_path):
+    """Override the upload directory setting to use a temporary path for each test.
+
+    Args:
+        tmp_path: pytest built-in temporary directory fixture.
+
+    Yields:
+        None — restores original upload_dir after each test.
+    """
+    settings = get_settings()
+    original_upload_dir = settings.upload_dir
+    settings.upload_dir = str(tmp_path / "uploads")
+    os.makedirs(settings.upload_dir, exist_ok=True)
+    yield
+    settings.upload_dir = original_upload_dir

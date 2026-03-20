@@ -1,44 +1,38 @@
 """Article ORM model."""
 
-import enum
-from datetime import datetime
-
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String, Table, Text
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, DateTime, Integer, String, Text, func
 
 from app.database import Base
 
-# Association table for many-to-many between articles and categories
-article_categories = Table(
-    "article_categories",
-    Base.metadata,
-    Column("article_id", Integer, ForeignKey("articles.id"), primary_key=True),
-    Column("category_id", Integer, ForeignKey("categories.id"), primary_key=True),
-)
 
+class ArticleCategory(Base):
+    """Association table between articles and categories."""
 
-class ArticleStatus(str, enum.Enum):
-    """Possible publication statuses for an article."""
+    __tablename__ = "article_categories"
 
-    draft = "draft"
-    published = "published"
+    article_id = Column(Integer, primary_key=True)
+    category_id = Column(Integer, primary_key=True)
 
 
 class Article(Base):
-    """ORM model representing a news/blog article."""
+    """Article database model.
+
+    Attributes:
+        id: Primary key.
+        title: Article title.
+        content: Article body content.
+        status: Publication status (draft/published).
+        image_url: Optional URL to the article's uploaded image.
+        created_at: Timestamp of creation.
+        updated_at: Timestamp of last update.
+    """
 
     __tablename__ = "articles"
 
     id = Column(Integer, primary_key=True, index=True)
-    title = Column(String(255), nullable=False)
-    body = Column(Text, nullable=False)
-    status = Column(Enum(ArticleStatus), nullable=False, default=ArticleStatus.draft)
-    author = Column(String(100), nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    categories = relationship(
-        "Category",
-        secondary=article_categories,
-        back_populates="articles",
-    )
+    title = Column(String(500), nullable=False)
+    content = Column(Text, nullable=True)
+    status = Column(String(50), default="draft", nullable=False)
+    image_url = Column(String(500), nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
