@@ -1,1 +1,1 @@
-"""CRUD operation helpers package."""
+"""CRUD package."""

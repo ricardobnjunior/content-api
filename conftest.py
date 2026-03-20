@@ -1,42 +1,49 @@
-"""Root conftest.py — configures test environment."""
+"""Root conftest — provides shared fixtures for all tests."""
 
-import os
 import pytest
-from sqlalchemy.orm import Session
-from starlette.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+TEST_DATABASE_URL = "sqlite:///:memory:"
 
 
-@pytest.fixture(scope="session", autouse=True)
-def setup_database():
-    """Create all tables once for the entire test session."""
-    from app.database import Base, create_tables, engine
-    create_tables()
-    yield
-    Base.metadata.drop_all(bind=engine)
+@pytest.fixture(scope="function")
+def db_session():
+    """Create an isolated in-memory SQLite session per test."""
+    # Import models FIRST so Base knows about them
+    import app.models  # noqa: F401
+    from app.database import Base
 
-
-@pytest.fixture
-def client() -> TestClient:
-    """Provide a Starlette TestClient for the FastAPI app."""
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setenv("ENVIRONMENT", "test")
-        mp.setenv("DATABASE_URL", "sqlite:///test.db")
-        mp.setenv("SECRET_KEY", "test-secret-key-not-for-production")
-        from app.config import get_settings
-        get_settings.cache_clear()
-        from app.main import create_app
-        test_app = create_app()
-        with TestClient(test_app) as test_client:
-            yield test_client
-        get_settings.cache_clear()
-
-
-@pytest.fixture
-def db_session() -> Session:
-    """Provide a SQLAlchemy Session for direct database operations in tests."""
-    from app.database import SessionLocal
-    db: Session = SessionLocal()
+    engine = create_engine(
+        TEST_DATABASE_URL, connect_args={"check_same_thread": False}
+    )
+    Base.metadata.create_all(engine)
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    session = TestingSessionLocal()
     try:
-        yield db
+        yield session
     finally:
-        db.close()
+        session.close()
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+
+
+@pytest.fixture(scope="function")
+def client(db_session):
+    """Return a TestClient with the DB dependency overridden."""
+    from starlette.testclient import TestClient
+
+    from app.database import get_db
+    from app.main import app
+
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    with TestClient(app, raise_server_exceptions=True) as c:
+        yield c
+    app.dependency_overrides.clear()

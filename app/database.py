@@ -1,44 +1,32 @@
-"""Database engine, session factory, and base model for SQLAlchemy (sync)."""
+"""Database configuration and session management."""
+
+import os
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-from app.config import get_settings
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./articles.db")
 
-settings = get_settings()
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 
-engine = create_engine(
-    settings.database_url,
-    connect_args={"check_same_thread": False},
-)
-
-SessionLocal = sessionmaker(
-    bind=engine,
-    autoflush=False,
-    autocommit=False,
-)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 class Base(DeclarativeBase):
-    """Declarative base class for all ORM models."""
+    """Base class for all ORM models."""
+    pass
 
 
 def get_db():
-    """Yield a database session and ensure it is closed after use.
-
-    Yields:
-        Session: A SQLAlchemy sync database session.
-    """
-    db: Session = SessionLocal()
+    """Dependency that provides a SQLAlchemy session."""
+    db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
 
 
-def create_tables() -> None:
-    """Create all database tables defined via ORM models.
-
-    This function should be called at application startup.
-    """
+def create_tables():
+    """Create all tables in the database."""
+    import app.models  # noqa: F401 - ensure models are registered
     Base.metadata.create_all(bind=engine)

@@ -1,1 +1,1 @@
-"""Content API application package."""
+"""App package."""
