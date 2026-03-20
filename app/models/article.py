@@ -1,51 +1,41 @@
-"""Article model with SQLAlchemy ORM."""
+"""Article ORM model."""
 
 import enum
+from datetime import datetime
 
 from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String, Table, Text
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
 
 from app.database import Base
 
-
-class ArticleStatus(str, enum.Enum):
-    """Status options for an article."""
-
-    DRAFT = "draft"
-    PUBLISHED = "published"
-    ARCHIVED = "archived"
-
-
+# Association table for many-to-many between articles and categories
 article_categories = Table(
     "article_categories",
     Base.metadata,
-    Column("article_id", Integer, ForeignKey("articles.id", ondelete="CASCADE")),
-    Column("category_id", Integer, ForeignKey("categories.id", ondelete="CASCADE")),
+    Column("article_id", Integer, ForeignKey("articles.id"), primary_key=True),
+    Column("category_id", Integer, ForeignKey("categories.id"), primary_key=True),
 )
 
 
+class ArticleStatus(str, enum.Enum):
+    """Possible publication statuses for an article."""
+
+    draft = "draft"
+    published = "published"
+
+
 class Article(Base):
-    """ORM model representing a blog article."""
+    """ORM model representing a news/blog article."""
 
     __tablename__ = "articles"
 
     id = Column(Integer, primary_key=True, index=True)
-    title = Column(String(200), nullable=False)
+    title = Column(String(255), nullable=False)
     body = Column(Text, nullable=False)
+    status = Column(Enum(ArticleStatus), nullable=False, default=ArticleStatus.draft)
     author = Column(String(100), nullable=False)
-    status = Column(
-        Enum(ArticleStatus),
-        default=ArticleStatus.DRAFT,
-        nullable=False,
-    )
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
-    )
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     categories = relationship(
         "Category",
